@@ -6,53 +6,54 @@ import { Eye, RotateCcw, GitFork, SplitSquareVertical, Clock, Shield } from "luc
 
 const FEATURES = [
   {
-    icon: Eye,
-    title: "Full Execution Capture",
-    description: "Every prompt, every tool call, every state mutation — captured with exact timestamps, input/output pairs, and token counts. Nothing is inferred. Nothing is reconstructed.",
-    detail: "You'll see exactly what your agent saw, exactly what it decided, and exactly why.",
-    tag: "Core",
-  },
-  {
     icon: RotateCcw,
-    title: "Deterministic Replay",
-    description: "Take any production session and replay it with identical starting state on your local machine. Same API responses, same random seeds, same decisions.",
-    detail: "If it happened once, you can make it happen again. On demand. On any machine.",
+    title: "Zero-Token Deterministic Replay",
+    description: "Replay a 100-step agent crash locally on your laptop 500 times. All API responses, tool outputs, and environment states are fed byte-for-byte from the trace.",
+    detail: "Cost: $0.00. Network calls: 0. Staging pollution: 0.",
     tag: "Core",
   },
   {
     icon: GitFork,
-    title: "Execution Branching",
-    description: "Fork execution at any decision point. Try a different prompt. Skip a tool call. Change a response. See how the trajectory changes — without touching production.",
-    detail: "Like git branches, but for agent behavior.",
-    tag: "Power",
-  },
-  {
-    icon: SplitSquareVertical,
-    title: "Side-by-Side Diff",
-    description: "Compare any two sessions step by step. See exactly where the behavior diverged — which decision led to which outcome. Find regressions before users do.",
-    detail: "Works across versions, environments, and prompt variants.",
-    tag: "Power",
-  },
-  {
-    icon: Clock,
-    title: "Time-Travel Debugging",
-    description: "Step forward and backward through any execution. Pause at any decision point. Inspect state. Understand context. Never read another stack trace in the dark.",
-    detail: "A time machine for your AI agent.",
-    tag: "Dashboard",
+    title: "Multiverse Branching Engine",
+    description: "Why re-run steps 1 to 41 to test a fix at Step 42? Fork the execution graph, mutate the prompt or tool output, and observe counterfactual branches in real time.",
+    detail: "Test 20 prompt variants in 30 seconds without paying for upstream steps.",
+    tag: "Core",
   },
   {
     icon: Shield,
-    title: "Anomaly Detection",
-    description: "AgentTrace watches for behavioral patterns that indicate something went wrong — unexpected tool call sequences, cost spikes, or deviation from known-good traces.",
-    detail: "Get alerted before your users notice.",
-    tag: "Dashboard",
+    title: "Zero-Leak Governance Sandbox",
+    description: "Passive tracers watch secrets leak in post-mortems. Our sandbox terminates execution the exact millisecond an agent touches an unrecorded network socket or unauthorized file.",
+    detail: "Guaranteed isolation. Zero unrecorded external mutations.",
+    tag: "Security",
+  },
+  {
+    icon: SplitSquareVertical,
+    title: "AutoFix Engine (AFE)",
+    description: "AI-powered differential analysis that compares passing and failing runs, pinpoints the root-cause divergence point, and automatically proposes a code patch.",
+    detail: "Go from bug report to verified code fix in under 60 seconds.",
+    tag: "AI Fix",
+  },
+  {
+    icon: Eye,
+    title: "Causal Execution Capture",
+    description: "Every prompt token, tool invocation, environment variable, and system clock tick captured with cryptographic Merkle hashes. Nothing inferred, nothing lost.",
+    detail: "Complete causal graphs replacing useless flat log files.",
+    tag: "Engine",
+  },
+  {
+    icon: Clock,
+    title: "State-Machine Time Travel",
+    description: "Step backward and forward through any multi-agent loop. Pause at any decision node. Inspect live memory, inspect tool inputs, and inject custom mocks.",
+    detail: "A true debugger for non-deterministic agent workflows.",
+    tag: "Engine",
   },
 ];
 
 const TAG_STYLES: Record<string, string> = {
-  Core: "bg-foreground text-background",
-  Power: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-  Dashboard: "bg-secondary text-muted-foreground",
+  Core: "bg-brand/10 text-brand border border-brand/20",
+  Security: "bg-rose-500/10 text-rose-500 border border-rose-500/20",
+  "AI Fix": "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20",
+  Engine: "bg-secondary text-foreground border border-border",
 };
 
 function useInView(ref: React.RefObject<Element | null>, threshold = 0.15) {
@@ -114,12 +115,17 @@ export function FeaturesSection() {
             inView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"
           )}
         >
-          <p className="text-xs font-mono text-muted-foreground uppercase tracking-[0.3em] mb-4">Capabilities</p>
-          <h2 className="text-4xl md:text-5xl font-bold text-foreground leading-tight">
-            Everything you need to understand
+          <p className="text-xs font-mono text-brand uppercase tracking-[0.25em] font-semibold mb-4">
+            Engineered Capabilities
+          </p>
+          <h2 className="text-3xl sm:text-5xl font-bold text-foreground leading-[1.1]">
+            Built to kill flaky runs
             <br />
-            <span className="text-muted-foreground">what your agent did.</span>
+            <span className="text-muted-foreground">before they reach production.</span>
           </h2>
+          <p className="text-base text-muted-foreground mt-4 leading-relaxed">
+            Zero token burn. Zero blind spots. Absolute deterministic control over non-deterministic LLM agents.
+          </p>
         </div>
 
         {/* Feature grid */}

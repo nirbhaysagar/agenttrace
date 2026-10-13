@@ -3,8 +3,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import { WaitlistForm } from "./WaitlistForm";
 
-const HEADLINE_WORDS = ["Record.", "Replay.", "Fix."];
+const HEADLINE_WORDS = [
+  "Good luck reproducing it.",
+  "Replay it locally for $0.",
+  "Fork reality and fix it.",
+];
 
 export function HeroSection() {
   const [wordIndex, setWordIndex] = useState(0);
@@ -19,7 +24,7 @@ export function HeroSection() {
   useEffect(() => {
     const interval = setInterval(() => {
       setWordIndex(i => (i + 1) % HEADLINE_WORDS.length);
-    }, 1800);
+    }, 2400);
     return () => clearInterval(interval);
   }, []);
 
@@ -76,19 +81,19 @@ export function HeroSection() {
   }, []);
 
   return (
-    <section className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden bg-background">
+    <section className="relative min-h-[92vh] flex flex-col items-center justify-center overflow-hidden bg-background pt-24 pb-16">
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
 
       <div className="relative z-10 max-w-5xl mx-auto px-6 text-center">
         {/* Badge */}
         <div
-          className="inline-flex items-center gap-2 mb-14 opacity-0 translate-y-3"
+          className="inline-flex items-center gap-2 mb-10 opacity-0 translate-y-3"
           style={{
             animation: revealed ? "fadeUp 0.6s ease forwards 0.2s" : "none",
           }}
         >
-          <span className="text-xs font-mono text-muted-foreground uppercase tracking-[0.25em] border border-border px-3 py-1.5 rounded-full bg-card">
-            Early Access
+          <span className="text-xs font-mono text-brand uppercase tracking-[0.25em] border border-brand/30 px-3.5 py-1.5 rounded-full bg-brand/10 font-semibold shadow-sm">
+            Passive Tracing is Dead · Active Replay Engine
           </span>
         </div>
 
@@ -99,10 +104,10 @@ export function HeroSection() {
             animation: revealed ? "fadeUp 0.8s ease forwards 0.35s" : "none",
           }}
         >
-          <h1 className="text-[clamp(52px,7.5vw,104px)] font-bold leading-[1.1] tracking-tight text-foreground">
-            Your agent ran.
+          <h1 className="text-[clamp(44px,6.8vw,92px)] font-bold leading-[1.08] tracking-tight text-foreground">
+            Your agent crashed at step 42.
           </h1>
-          <h1 className="text-[clamp(52px,7.5vw,104px)] font-bold leading-[1.1] tracking-tight text-brand mt-2 min-h-[1.2em]">
+          <h1 className="text-[clamp(40px,6.2vw,84px)] font-bold leading-[1.12] tracking-tight text-brand mt-2 min-h-[1.25em]">
             <span key={wordIndex} className="inline-block drop-shadow-sm" style={{ animation: "fadeUp 0.5s ease forwards" }}>
               {HEADLINE_WORDS[wordIndex]}
             </span>
@@ -111,44 +116,80 @@ export function HeroSection() {
 
         {/* Sub */}
         <p
-          className="mt-10 text-lg md:text-xl text-muted-foreground max-w-xl mx-auto leading-relaxed opacity-0"
+          className="mt-6 text-base md:text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed opacity-0"
           style={{
             animation: revealed ? "fadeUp 0.8s ease forwards 0.65s" : "none",
           }}
         >
-          You can&apos;t debug what you didn&apos;t record. AgentTrace records everything, so nothing is a mystery.
+          Stop re-running broken agents 50 times hoping the bug reproduces. AgentTrace freezes complete causal states so you can replay, mutate, and fix failures with mathematical certainty.
         </p>
 
-        {/* CTA */}
+        {/* Feature Pills */}
         <div
-          className="mt-12 flex items-center justify-center gap-5 opacity-0"
+          className="mt-6 flex flex-wrap items-center justify-center gap-2 opacity-0"
+          style={{
+            animation: revealed ? "fadeUp 0.8s ease forwards 0.75s" : "none",
+          }}
+        >
+          <span className="px-3 py-1 rounded-full text-xs font-mono bg-card border border-border text-foreground">
+            ⚡ Deterministic Replay
+          </span>
+          <span className="px-3 py-1 rounded-full text-xs font-mono bg-card border border-border text-foreground">
+            🔱 Multiverse Branching
+          </span>
+          <span className="px-3 py-1 rounded-full text-xs font-mono bg-card border border-border text-foreground">
+            🛡️ Zero-Leak Sandbox
+          </span>
+          <span className="px-3 py-1 rounded-full text-xs font-mono bg-card border border-border text-foreground">
+            🩹 AutoFix Engine
+          </span>
+        </div>
+
+        {/* Inline Waitlist CTA */}
+        <div
+          className="mt-10 opacity-0"
           style={{
             animation: revealed ? "fadeUp 0.8s ease forwards 0.85s" : "none",
           }}
         >
-          <Link href="/signup">
-            <button className="inline-flex items-center gap-2 px-8 py-4 bg-foreground text-background text-sm font-semibold rounded-xl border border-transparent hover:bg-brand hover:text-brand-foreground hover:shadow-[0_0_20px_rgba(99,102,241,0.3)] transition-all">
-              Start for free
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </Link>
-          <Link
-            href="/#demo"
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors underline-offset-4 hover:underline"
-          >
-            See how it works ↓
-          </Link>
+          <WaitlistForm variant="inline" />
         </div>
 
-        {/* Social proof micro-line */}
-        <p
-          className="mt-10 text-xs text-muted-foreground/50 font-mono tracking-widest uppercase opacity-0"
+        {/* Quick links & micro-copy */}
+        <div
+          className="mt-6 flex flex-wrap items-center justify-center gap-6 text-xs text-muted-foreground opacity-0"
           style={{
-            animation: revealed ? "fadeUp 0.6s ease forwards 1.1s" : "none",
+            animation: revealed ? "fadeUp 0.6s ease forwards 1.0s" : "none",
           }}
         >
-          No credit card · 5 min setup · Python & Node
-        </p>
+          <Link
+            href="/#architecture"
+            className="hover:text-foreground transition-colors underline-offset-4 hover:underline"
+          >
+            How it works ↓
+          </Link>
+          <span className="text-border">·</span>
+          <Link
+            href="/#features"
+            className="hover:text-foreground transition-colors underline-offset-4 hover:underline"
+          >
+            Capabilities
+          </Link>
+          <span className="text-border">·</span>
+          <Link
+            href="/#compare"
+            className="hover:text-foreground transition-colors underline-offset-4 hover:underline"
+          >
+            Compare Matrix
+          </Link>
+          {/* <span className="text-border">·</span>
+          <Link
+            href="/login"
+            className="text-brand hover:underline font-medium"
+          >
+            Tester Login →
+          </Link> */}
+        </div>
       </div>
 
       {/* Scroll indicator */}

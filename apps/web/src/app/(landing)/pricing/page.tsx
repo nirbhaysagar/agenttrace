@@ -227,7 +227,8 @@ export default function PricingPage() {
                                 </div>
 
                                 <div className="relative z-10 mt-auto">
-                                    <Link href="/signup">
+                                    {/* <Link href="/signup"> */}
+                                    <Link href="/waitlist">
                                         <Button
                                             size="lg"
                                             className={`w-full font-bold h-12 rounded-xl tracking-wide text-[13px] uppercase shadow-none border transition-all ${tier.popular
@@ -235,7 +236,7 @@ export default function PricingPage() {
                                                 : 'bg-muted/50 hover:bg-muted text-foreground hover:text-foreground border-border hover:border-foreground/50'
                                                 }`}
                                         >
-                                            {tier.cta}
+                                            {tier.cta === "Contact Sales" ? "Contact Sales" : "Join Early Access"}
                                         </Button>
                                     </Link>
 

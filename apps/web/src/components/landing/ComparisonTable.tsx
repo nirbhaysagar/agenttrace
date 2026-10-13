@@ -4,17 +4,48 @@ import { cn } from "@/lib/utils";
 
 interface ComparisonRow {
   feature: string;
+  note: string;
   agentTrace: boolean;
   competitors: boolean[]; // Order: LangSmith, Braintrust, Arize
 }
 
 const COMPARISON_DATA: ComparisonRow[] = [
-  { feature: "Deterministic Replay", agentTrace: true, competitors: [false, false, false] },
-  { feature: "Event-Level Branching", agentTrace: true, competitors: [false, false, false] },
-  { feature: "CLI-Based Replay", agentTrace: true, competitors: [false, false, false] },
-  { feature: "Local-First Execution", agentTrace: true, competitors: [false, false, false] },
-  { feature: "Open Trace Protocol", agentTrace: true, competitors: [false, false, false] },
-  { feature: "State Injection", agentTrace: true, competitors: [false, false, false] },
+  {
+    feature: "Deterministic Local Replay",
+    note: "Replay bugs byte-for-byte on localhost without calling external APIs",
+    agentTrace: true,
+    competitors: [false, false, false],
+  },
+  {
+    feature: "Zero-Token Debugging Cost",
+    note: "Run 500 reproductions for $0.00 using frozen causal traces",
+    agentTrace: true,
+    competitors: [false, false, false],
+  },
+  {
+    feature: "Multiverse Counterfactual Branching",
+    note: "Fork step N, mutate prompts/tools, and observe alternate realities",
+    agentTrace: true,
+    competitors: [false, false, false],
+  },
+  {
+    feature: "Zero-Leak Governance Sandbox",
+    note: "Kills executions on unrecorded network sockets or file writes",
+    agentTrace: true,
+    competitors: [false, false, false],
+  },
+  {
+    feature: "Automated Code Patching (AFE)",
+    note: "AI root-cause differential analysis and automated bug fix patches",
+    agentTrace: true,
+    competitors: [false, false, false],
+  },
+  {
+    feature: "Cryptographic State Merkle Ledger",
+    note: "Tamper-evident verification of entire agent decision tree",
+    agentTrace: true,
+    competitors: [false, false, false],
+  },
 ];
 
 /**
@@ -48,7 +79,8 @@ export function ComparisonTable() {
           {COMPARISON_DATA.map((row, idx) => (
             <tr key={idx} className="hover:bg-secondary/10 transition-colors">
               <td className="px-6 py-4 text-foreground font-medium border-r border-border">
-                {row.feature}
+                <div className="font-semibold text-foreground text-[13px]">{row.feature}</div>
+                <div className="text-[11px] text-muted-foreground/80 mt-0.5">{row.note}</div>
               </td>
               <td className="px-6 py-4 text-center bg-accent/5 border-r border-border">
                 <div className="flex justify-center">

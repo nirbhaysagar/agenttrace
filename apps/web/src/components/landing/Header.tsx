@@ -45,17 +45,10 @@ export const Header = () => {
           </Link>
 
           {/* Navigation */}
-          <nav className="hidden md:flex items-center gap-8">
+          <nav className="hidden md:flex items-center gap-7">
             <Link
-              href="/#problem"
-              onClick={(e) => scrollToSection(e, "problem")}
-              className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-            >
-              The Problem
-            </Link>
-            <Link
-              href="/#how-it-works"
-              onClick={(e) => scrollToSection(e, "how-it-works")}
+              href="/#architecture"
+              onClick={(e) => scrollToSection(e, "architecture")}
               className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
             >
               How it works
@@ -68,17 +61,23 @@ export const Header = () => {
               Features
             </Link>
             <Link
+              href="/#compare"
+              onClick={(e) => scrollToSection(e, "compare")}
+              className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Compare
+            </Link>
+            <Link
+              href="/waitlist"
+              className="text-sm font-medium text-brand hover:text-brand/80 transition-colors font-semibold"
+            >
+              Waitlist
+            </Link>
+            <Link
               href="/docs"
               className={`text-sm font-medium transition-colors ${pathname.startsWith('/docs') ? 'text-foreground font-semibold' : 'text-muted-foreground hover:text-foreground'}`}
             >
               Docs
-            </Link>
-            <Link
-              href="/#pricing"
-              onClick={(e) => scrollToSection(e, "pricing")}
-              className={`text-sm font-medium transition-colors ${isPricing ? 'text-foreground font-semibold' : 'text-muted-foreground hover:text-foreground'}`}
-            >
-              Pricing
             </Link>
           </nav>
 
@@ -86,19 +85,21 @@ export const Header = () => {
           <div className="flex items-center gap-4">
             <ModeToggle />
 
-            <div className="hidden md:flex items-center gap-4">
-              <Link href="/signup">
-                <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground hover:bg-accent">
-                  Sign in
+            <div className="hidden md:flex items-center gap-3">
+              {/* <Link href="/login">
+                <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground hover:bg-accent text-xs">
+                  Tester Login
                 </Button>
-              </Link>
-              <Link href="/signup">
-                <Button size="sm" className="hover:bg-brand hover:text-brand-foreground hover:shadow-[0_0_20px_rgba(99,102,241,0.3)] transition-all">Get Started</Button>
+              </Link> */}
+              <Link href="/#waitlist" onClick={(e) => scrollToSection(e, "waitlist")}>
+                <Button size="sm" className="bg-foreground text-background hover:bg-brand hover:text-brand-foreground hover:shadow-[0_0_20px_rgba(99,102,241,0.3)] transition-all font-semibold">
+                  Join Waitlist
+                </Button>
               </Link>
             </div>
             <div className="md:hidden flex items-center gap-2">
-              <Link href="/signup">
-                <Button size="sm">Join Beta</Button>
+              <Link href="/waitlist">
+                <Button size="sm" className="bg-foreground text-background">Waitlist</Button>
               </Link>
               <Sheet>
                 <SheetTrigger asChild>
@@ -116,33 +117,40 @@ export const Header = () => {
                         AgentTrace
                       </span>
                     </Link>
-                    <nav className="flex flex-col gap-6">
+                    <nav className="flex flex-col gap-5">
                       <Link
-                        href="/#how-it-works"
-                        onClick={(e) => scrollToSection(e, "how-it-works")}
-                        className="text-lg font-medium text-muted-foreground hover:text-foreground transition-colors"
+                        href="/#architecture"
+                        onClick={(e) => scrollToSection(e, "architecture")}
+                        className="text-base font-medium text-muted-foreground hover:text-foreground transition-colors"
                       >
                         How it works
                       </Link>
                       <Link
-                        href="/#capabilities"
-                        onClick={(e) => scrollToSection(e, "capabilities")}
-                        className="text-lg font-medium text-muted-foreground hover:text-foreground transition-colors"
+                        href="/#features"
+                        onClick={(e) => scrollToSection(e, "features")}
+                        className="text-base font-medium text-muted-foreground hover:text-foreground transition-colors"
                       >
-                        Capabilities
+                        Features
                       </Link>
-                      <Link 
-                        href="/docs" 
-                        className={`text-lg transition-colors ${pathname.startsWith('/docs') ? 'text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                      <Link
+                        href="/#compare"
+                        onClick={(e) => scrollToSection(e, "compare")}
+                        className="text-base font-medium text-muted-foreground hover:text-foreground transition-colors"
                       >
-                        Docs
+                        Compare Matrix
                       </Link>
-                      <Link href="/pricing" className="text-lg font-medium text-muted-foreground hover:text-foreground transition-colors">
-                        Pricing
+                      <Link
+                        href="/waitlist"
+                        className="text-base font-medium text-brand font-semibold"
+                      >
+                        Priority Waitlist
                       </Link>
-                      <Link href="/signup" className="text-lg font-medium text-brand hover:text-brand/80 transition-colors">
-                        Sign in
-                      </Link>
+                      {/* <Link
+                        href="/login"
+                        className="text-base font-medium text-muted-foreground hover:text-foreground"
+                      >
+                        Tester Login
+                      </Link> */}
                     </nav>
                   </div>
                 </SheetContent>
