@@ -21,19 +21,28 @@ class Config:
     governance_level: str = "relaxed" # Options: "relaxed", "governance"
     
     @classmethod
-    def setup(cls, api_key: str = None, api_url: str = None, mode: str = "record", replay_events: list = None, governance_level: str = None):
-        cls.api_key = api_key or os.environ.get("AGENTTRACE_API_KEY")
+    def setup(cls, api_key: str = None, api_url: str = None, mode: str = None, replay_events: list = None, governance_level: str = None):
+        if api_key:
+            cls.api_key = api_key
+        elif not cls.api_key and os.environ.get("AGENTTRACE_API_KEY"):
+            cls.api_key = os.environ.get("AGENTTRACE_API_KEY")
+
         if api_url:
             cls.api_url = api_url
         elif os.environ.get("AGENTTRACE_API_URL"):
             cls.api_url = os.environ.get("AGENTTRACE_API_URL")
             
-        cls.governance_level = governance_level or os.environ.get("AGENTTRACE_GOVERNANCE_LEVEL") or "relaxed"
+        if governance_level:
+            cls.governance_level = governance_level
+        elif os.environ.get("AGENTTRACE_GOVERNANCE_LEVEL"):
+            cls.governance_level = os.environ.get("AGENTTRACE_GOVERNANCE_LEVEL")
 
-        if os.environ.get("AGENTTRACE_MODE"):
+        if mode is not None:
+            cls.mode = mode
+        elif os.environ.get("AGENTTRACE_MODE"):
             cls.mode = os.environ.get("AGENTTRACE_MODE")
-        else:
-            cls.mode = mode or "record"
+        elif not cls.mode:
+            cls.mode = "record"
         
         if replay_events is not None:
             cls.replay_events = replay_events
@@ -56,7 +65,7 @@ class Config:
                 raise RuntimeError(f"[AgentTrace] Events file not found: {events_file}")
 
 
-def init(api_key: str = None, api_url: str = None, mode: str = "record", replay_events: list = None):
+def init(api_key: str = None, api_url: str = None, mode: str = "record", replay_events: list = None, governance_level: str = None):
     """
     Initialize the AgentTrace SDK.
     
@@ -66,6 +75,7 @@ def init(api_key: str = None, api_url: str = None, mode: str = "record", replay_
         api_url: The AgentTrace API URL (default: api.agenttrace.com)
         mode: "record" for live execution, "replay" for intercepted deterministic execution.
         replay_events: The array of previous trace events to feed the interceptor in replay mode.
+        governance_level: "relaxed" (warn on unexpected I/O) or "governance" (strict deterministic sandbox).
     """
-    Config.setup(api_key, api_url, mode, replay_events)
+    Config.setup(api_key=api_key, api_url=api_url, mode=mode, replay_events=replay_events, governance_level=governance_level)
     _block_threading()

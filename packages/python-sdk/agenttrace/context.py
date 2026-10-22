@@ -18,10 +18,6 @@ def _get_active_step() -> Optional[Dict[str, Any]]:
     return _step_ctx.get()
 
 def _push_event(event: Dict[str, Any]):
-    from .config import Config
-    if Config.mode == "replay":
-        return
-        
     trace = _get_or_create_trace()
     with trace["lock"]:
         event["seq"] = trace["event_count"]

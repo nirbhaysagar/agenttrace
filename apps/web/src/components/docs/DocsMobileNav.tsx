@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 const sidebarNavItems = [
   { title: "Getting Started", href: "/docs/getting-started" },
   { title: "Core Concepts", href: "/docs/concepts" },
+  { title: "Daily Knowledge Centre", href: "/docs/daily-knowledge-centre" },
   { title: "SDK Reference", href: "/docs/sdk-reference" },
   { title: "Deterministic Replay", href: "/docs/replay" },
   { title: "Branching", href: "/docs/branching" },

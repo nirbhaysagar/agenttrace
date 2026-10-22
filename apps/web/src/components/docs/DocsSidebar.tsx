@@ -10,7 +10,8 @@ import {
   Zap, 
   GitFork, 
   Layers, 
-  FileJson 
+  FileJson,
+  Brain 
 } from "lucide-react";
 
 const sidebarNavItems = [
@@ -23,6 +24,11 @@ const sidebarNavItems = [
     title: "Core Concepts",
     href: "/docs/concepts",
     icon: Layers,
+  },
+  {
+    title: "Daily Knowledge Centre",
+    href: "/docs/daily-knowledge-centre",
+    icon: Brain,
   },
   {
     title: "SDK Reference",

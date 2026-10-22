@@ -15,6 +15,11 @@ class DeterminismLeakError(Exception):
     """Raised when the agent attempts unmanaged I/O (bypass) during deterministic replay."""
     pass
 
+_active_interceptor = None
+
+def get_active_interceptor():
+    return _active_interceptor
+
 class DeterministicInterceptor:
     """
     The core engine for "Choice 1" Deterministic Execution - Governance Tier.
@@ -30,6 +35,18 @@ class DeterministicInterceptor:
         self.cursor = 0  
         self.original_funcs = {}
 
+    def consume_tool_event(self, name: str = None, event_type: str = "tool_call"):
+        while self.cursor < len(self.replay_events):
+            evt = self.replay_events[self.cursor]
+            if evt.get("type") == event_type or evt.get("type") in ("tool_call", "observation", "thought"):
+                self.cursor += 1
+                return evt
+            if evt.get("type") in ("agent_start", "agent_complete"):
+                self.cursor += 1
+                continue
+            break
+        return None
+
     def _handle_leak(self, message):
         """Standardized handler for causal leaks."""
         if self.governance_level == "governance":
@@ -37,10 +54,14 @@ class DeterministicInterceptor:
         else:
             print(f"[AgentTrace] WARNING: Causal Leak Detected - {message}")
     
-    def setup(self):
+    def setup(self, initial_epoch=None):
         """Applies the runtime patches."""
+        global _active_interceptor
+        _active_interceptor = self
+
         if self.mode == "record":
             print("[AgentTrace] Initializing Network Capture (Record Mode).")
+            self._patch_time(initial_epoch)
             self._patch_network_record()
         elif self.mode == "replay":
             print(f"[AgentTrace] Initializing governance sandbox. Events: {len(self.replay_events)}")
@@ -48,7 +69,7 @@ class DeterministicInterceptor:
             validate_trace_integrity(self.replay_events)
             
             self._patch_environment() 
-            self._patch_time()
+            self._patch_time(initial_epoch)
             self._patch_randomness()
             self._patch_network_replay()
             self._patch_boundary_execution()
@@ -57,6 +78,9 @@ class DeterministicInterceptor:
         
     def teardown(self):
         """Removes the runtime patches and verifies exact consumption."""
+        global _active_interceptor
+        _active_interceptor = None
+
         print("[AgentTrace] Tearing down Deterministic Sandbox/Recorder.")
         self._restore_boundaries()
         self._restore_time()
@@ -84,19 +108,21 @@ class DeterministicInterceptor:
                     print(f"[AgentTrace] Warning: Env Drift '{key}'. Trace: '{recorded_env[key]}', Actual: '{actual_val}'")
 
     # --- Time Freezing ---
-    def _patch_time(self):
+    def _patch_time(self, initial_epoch=None):
         import time
         import datetime
-        if not self.replay_events: return
-        initial_epoch = self.replay_events[0].get("timestamp_epoch", time.time())
+        if initial_epoch is None:
+            if self.replay_events:
+                initial_epoch = self.replay_events[0].get("timestamp_epoch", time.time())
+            else:
+                initial_epoch = time.time()
 
         self.original_funcs["time.time"] = time.time
         self.original_funcs["time.perf_counter"] = time.perf_counter
         self.original_funcs["time.monotonic"] = time.monotonic
         self.original_funcs["time.process_time"] = time.process_time
         self.original_funcs["time.thread_time"] = time.thread_time
-        self.original_funcs["datetime.datetime.now"] = datetime.datetime.now
-        self.original_funcs["datetime.datetime.utcnow"] = datetime.datetime.utcnow
+        self.original_funcs["datetime.datetime"] = datetime.datetime
 
         def mocked_time():
             if self.cursor < len(self.replay_events):
@@ -123,8 +149,8 @@ class DeterministicInterceptor:
         for k in keys:
             if k in self.original_funcs:
                 setattr(time, k.split('.')[1], self.original_funcs[k])
-        if "datetime.datetime.now" in self.original_funcs:
-            datetime.datetime = self.original_funcs["datetime.datetime.now"].__self__ # type: ignore
+        if "datetime.datetime" in self.original_funcs:
+            datetime.datetime = self.original_funcs["datetime.datetime"]
 
     # --- Randomness & Entropy Lockdown ---
     def _patch_randomness(self):
