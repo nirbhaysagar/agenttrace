@@ -19,24 +19,28 @@ def _get_active_step() -> Optional[Dict[str, Any]]:
     return _step_ctx.get()
 
 def _get_step_name() -> str:
-    """Returns the name of the current step or 'default' if no step is active."""
+    """Returns the name of the current step or 'root' if no step is active."""
     step = _get_active_step()
     if step:
         return step.get("name", "unknown_step")
     return "root"
 
 def _push_event(event: Dict[str, Any]):
-    from .config import Config
-    if Config.mode == "replay":
-        return
-        
     if _capturing.get():
         return
-        
+
     trace = _get_or_create_trace()
-    with trace["lock"]:
-        # Tag event with the current step context for async/thread matching
-        event["step"] = _get_step_name()
+    lock = trace.get("lock")
+    if lock:
+        with lock:
+            if "step" not in event:
+                event["step"] = _get_step_name()
+            event["seq"] = trace["event_count"]
+            trace["events"].append(event)
+            trace["event_count"] += 1
+    else:
+        if "step" not in event:
+            event["step"] = _get_step_name()
         event["seq"] = trace["event_count"]
         trace["events"].append(event)
         trace["event_count"] += 1

@@ -227,6 +227,7 @@ class DeterministicInterceptor:
 
     # --- Network & Boundary ---
     def _patch_network_record(self):
+        # 1. urllib3 (requests)
         try:
             import urllib3
             import urllib3.connectionpool
@@ -250,7 +251,51 @@ class DeterministicInterceptor:
             urllib3.connectionpool.HTTPConnectionPool.urlopen = recording_urlopen
         except ImportError: pass
 
+        # 2. httpx (OpenAI, Anthropic, Groq)
+        try:
+            import httpx
+            from .context import _push_event
+            
+            self.original_funcs["httpx.Client.send"] = httpx.Client.send
+            def recording_httpx_send(client_self, request, **kwargs):
+                full_url = str(request.url)
+                if "/api/trace" in full_url:
+                    return self.original_funcs["httpx.Client.send"](client_self, request, **kwargs)
+                res = self.original_funcs["httpx.Client.send"](client_self, request, **kwargs)
+                res.read()
+                try:
+                    res_body_str = res.content.decode("utf-8")
+                except:
+                    import base64
+                    res_body_str = base64.b64encode(res.content).decode("utf-8")
+                _push_event({
+                    "seq": 0, "type": "network_call", "timestamp_epoch": time.time(),
+                    "payload": {"method": request.method, "url": full_url, "status": res.status_code, "response": res_body_str}
+                })
+                return res
+            httpx.Client.send = recording_httpx_send
+
+            self.original_funcs["httpx.AsyncClient.send"] = httpx.AsyncClient.send
+            async def recording_httpx_send_async(client_self, request, **kwargs):
+                full_url = str(request.url)
+                if "/api/trace" in full_url:
+                    return await self.original_funcs["httpx.AsyncClient.send"](client_self, request, **kwargs)
+                res = await self.original_funcs["httpx.AsyncClient.send"](client_self, request, **kwargs)
+                await res.aread()
+                try: res_body_str = res.content.decode("utf-8")
+                except:
+                    import base64
+                    res_body_str = base64.b64encode(res.content).decode("utf-8")
+                _push_event({
+                    "seq": 0, "type": "network_call", "timestamp_epoch": time.time(),
+                    "payload": {"method": request.method, "url": full_url, "status": res.status_code, "response": res_body_str}
+                })
+                return res
+            httpx.AsyncClient.send = recording_httpx_send_async
+        except ImportError: pass
+
     def _patch_network_replay(self):
+        # 1. urllib3 lookup
         try:
             import urllib3.connectionpool
             def mocked_urlopen_urllib3(pool_self, method, url, body=None, headers=None, **kwargs):
@@ -258,6 +303,22 @@ class DeterministicInterceptor:
                 matched_event = self._consume_network_event(method, full_url, body)
                 return self._make_mocked_urllib3_response(matched_event, full_url)
             urllib3.connectionpool.HTTPConnectionPool.urlopen = mocked_urlopen_urllib3
+        except ImportError: pass
+
+        # 2. httpx lookup
+        try:
+            import httpx
+            def mocked_httpx_send(client_self, request, **kwargs):
+                full_url = str(request.url)
+                matched_event = self._consume_network_event(request.method, full_url, getattr(request, "content", None))
+                return self._make_mocked_httpx_response(matched_event, request)
+            httpx.Client.send = mocked_httpx_send
+
+            async def mocked_httpx_send_async(client_self, request, **kwargs):
+                full_url = str(request.url)
+                matched_event = self._consume_network_event(request.method, full_url, getattr(request, "content", None))
+                return self._make_mocked_httpx_response(matched_event, request)
+            httpx.AsyncClient.send = mocked_httpx_send_async
         except ImportError: pass
 
     def _consume_network_event(self, method, url, body=None):
@@ -269,7 +330,17 @@ class DeterministicInterceptor:
             raise ReplayMismatchError(f"[AgentTrace] Sandbox Divergence: Unexpected network {method} {url}")
         evt = self.replay_events[self.cursor]
         if url != evt.get("payload", {}).get("url", ""):
-            raise ReplayMismatchError(f"[AgentTrace] Sandbox Divergence: Expected '{evt.get('payload', {}).get('url')}'")
+            # Fallback scan for async reordering
+            matched_idx = None
+            for idx in range(self.cursor, len(self.replay_events)):
+                cand = self.replay_events[idx]
+                if cand.get("type") == "network_call" and cand.get("payload", {}).get("url") == url and cand.get("payload", {}).get("method") == method:
+                    matched_idx = idx
+                    break
+            if matched_idx is not None:
+                evt = self.replay_events.pop(matched_idx)
+                return evt
+            raise ReplayMismatchError(f"[AgentTrace] Sandbox Divergence: Expected '{evt.get('payload', {}).get('url')}' but got '{url}'")
         self.cursor += 1
         return evt
 
@@ -285,20 +356,186 @@ class DeterministicInterceptor:
         import io
         return HTTPResponse(body=io.BytesIO(data), status=payload.get("status", 200), preload_content=False)
 
+    def _make_mocked_httpx_response(self, matched_event, request):
+        payload = matched_event.get("payload", {})
+        data = payload.get("response", "{}")
+        if isinstance(data, str):
+            try: data = data.encode("utf-8")
+            except:
+                import base64
+                data = base64.b64decode(data)
+        import httpx
+        return httpx.Response(
+            status_code=payload.get("status", 200),
+            content=data,
+            request=request,
+        )
+
     def _patch_boundary_execution(self):
         import socket, subprocess
         self.original_funcs["socket.getaddrinfo"] = socket.getaddrinfo
-        self.original_funcs["socket.socket.connect"] = socket.socket.connect
-        
-        def mocked_getaddrinfo(*args, **kwargs):
-            self._handle_leak("DNS leak")
-            return self.original_funcs["socket.getaddrinfo"](*args, **kwargs)
-        socket.getaddrinfo = mocked_getaddrinfo
+        self.original_funcs["socket.socket"] = socket.socket
+        outer = self
+        original_socket_cls = self.original_funcs["socket.socket"]
 
-        def mocked_connect(sock_self, address):
-            self._handle_leak(f"Socket leak ({address})")
-            return self.original_funcs["socket.socket.connect"](sock_self, address)
-        socket.socket.connect = mocked_connect
+        if self.mode == "record":
+            original_connect = socket.socket.connect
+            original_send = socket.socket.send
+            original_sendall = socket.socket.sendall
+            original_recv = socket.socket.recv
+            original_recv_into = socket.socket.recv_into
+            original_close = socket.socket.close
+            _socket_addresses = {}
+
+            def recording_connect(sock_self, address):
+                _socket_addresses[id(sock_self)] = address
+                return original_connect(sock_self, address)
+
+            def recording_send(sock_self, data, flags=0):
+                from .context import _capturing, _push_event
+                res = original_send(sock_self, data, flags)
+                if not _capturing.get():
+                    try:
+                        import base64
+                        addr = _socket_addresses.get(id(sock_self))
+                        _push_event({
+                            "type": "socket_call",
+                            "payload": {
+                                "op": "send",
+                                "address": list(addr) if isinstance(addr, (list, tuple)) else addr,
+                                "data": base64.b64encode(data[:res]).decode("utf-8")
+                            }
+                        })
+                    except Exception: pass
+                return res
+
+            def recording_sendall(sock_self, data, flags=0):
+                from .context import _capturing, _push_event
+                res = original_sendall(sock_self, data, flags)
+                if not _capturing.get():
+                    try:
+                        import base64
+                        addr = _socket_addresses.get(id(sock_self))
+                        _push_event({
+                            "type": "socket_call",
+                            "payload": {
+                                "op": "send",
+                                "address": list(addr) if isinstance(addr, (list, tuple)) else addr,
+                                "data": base64.b64encode(data).decode("utf-8")
+                            }
+                        })
+                    except Exception: pass
+                return res
+
+            def recording_recv(sock_self, buflen, flags=0):
+                from .context import _capturing, _push_event
+                data = original_recv(sock_self, buflen, flags)
+                if not _capturing.get():
+                    try:
+                        import base64
+                        addr = _socket_addresses.get(id(sock_self))
+                        _push_event({
+                            "type": "socket_call",
+                            "payload": {
+                                "op": "recv",
+                                "address": list(addr) if isinstance(addr, (list, tuple)) else addr,
+                                "data": base64.b64encode(data).decode("utf-8")
+                            }
+                        })
+                    except Exception: pass
+                return data
+
+            def recording_recv_into(sock_self, buffer, nbytes=0, flags=0):
+                from .context import _capturing, _push_event
+                res = original_recv_into(sock_self, buffer, nbytes, flags)
+                if not _capturing.get() and res > 0:
+                    try:
+                        import base64
+                        addr = _socket_addresses.get(id(sock_self))
+                        data_read = bytes(memoryview(buffer)[:res])
+                        _push_event({
+                            "type": "socket_call",
+                            "payload": {
+                                "op": "recv",
+                                "address": list(addr) if isinstance(addr, (list, tuple)) else addr,
+                                "data": base64.b64encode(data_read).decode("utf-8")
+                            }
+                        })
+                    except Exception: pass
+                return res
+
+            def recording_close(sock_self):
+                _socket_addresses.pop(id(sock_self), None)
+                return original_close(sock_self)
+
+            socket.socket.connect = recording_connect
+            socket.socket.send = recording_send
+            socket.socket.sendall = recording_sendall
+            socket.socket.recv = recording_recv
+            socket.socket.recv_into = recording_recv_into
+            socket.socket.close = recording_close
+
+            self.original_funcs["socket.socket.connect"] = original_connect
+            self.original_funcs["socket.socket.send"] = original_send
+            self.original_funcs["socket.socket.sendall"] = original_sendall
+            self.original_funcs["socket.socket.recv"] = original_recv
+            self.original_funcs["socket.socket.recv_into"] = original_recv_into
+            self.original_funcs["socket.socket.close"] = original_close
+
+        elif self.mode == "replay":
+            class AgentTraceSocketProxy:
+                def __init__(self, family=socket.AF_INET, type=socket.SOCK_STREAM, proto=0, fileno=None):
+                    self._sock = original_socket_cls(family, type, proto, fileno)
+                    self._address = None
+
+                def connect(self, address):
+                    self._address = address
+                    return None
+
+                def send(self, data, flags=0):
+                    return len(data)
+
+                def sendall(self, data, flags=0):
+                    self.send(data, flags)
+
+                def recv(self, buflen, flags=0):
+                    while outer.cursor < len(outer.replay_events):
+                        evt = outer.replay_events[outer.cursor]
+                        if evt.get("type") == "socket_call" and evt.get("payload", {}).get("op") == "recv":
+                            outer.cursor += 1
+                            import base64
+                            return base64.b64decode(evt["payload"]["data"])
+                        outer.cursor += 1
+                    return b""
+
+                def recv_into(self, buffer, nbytes=0, flags=0):
+                    data = self.recv(nbytes if nbytes else len(buffer), flags)
+                    length = len(data)
+                    buffer[:length] = data
+                    return length
+
+                def close(self):
+                    return self._sock.close()
+
+                def makefile(self, mode='r', buffering=None, *, encoding=None, errors=None, newline=None):
+                    import io
+                    return io.BytesIO()
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    self.close()
+
+                def __getattr__(self, name):
+                    return getattr(self._sock, name)
+
+            socket.socket = AgentTraceSocketProxy
+
+            def mocked_getaddrinfo(*args, **kwargs):
+                self._handle_leak("DNS leak")
+                return self.original_funcs["socket.getaddrinfo"](*args, **kwargs)
+            socket.getaddrinfo = mocked_getaddrinfo
 
         self.original_funcs["subprocess.Popen"] = subprocess.Popen
         def mocked_popen(*args, **kwargs):
@@ -309,7 +546,13 @@ class DeterministicInterceptor:
     def _restore_boundaries(self):
         import socket, subprocess, builtins, os
         if "socket.getaddrinfo" in self.original_funcs: socket.getaddrinfo = self.original_funcs["socket.getaddrinfo"]
+        if "socket.socket" in self.original_funcs: socket.socket = self.original_funcs["socket.socket"]
         if "socket.socket.connect" in self.original_funcs: socket.socket.connect = self.original_funcs["socket.socket.connect"]
+        if "socket.socket.send" in self.original_funcs: socket.socket.send = self.original_funcs["socket.socket.send"]
+        if "socket.socket.sendall" in self.original_funcs: socket.socket.sendall = self.original_funcs["socket.socket.sendall"]
+        if "socket.socket.recv" in self.original_funcs: socket.socket.recv = self.original_funcs["socket.socket.recv"]
+        if "socket.socket.recv_into" in self.original_funcs: socket.socket.recv_into = self.original_funcs["socket.socket.recv_into"]
+        if "socket.socket.close" in self.original_funcs: socket.socket.close = self.original_funcs["socket.socket.close"]
         if "subprocess.Popen" in self.original_funcs: subprocess.Popen = self.original_funcs["subprocess.Popen"]
         if "builtins.open" in self.original_funcs: builtins.open = self.original_funcs["builtins.open"]
         if "os.listdir" in self.original_funcs: os.listdir = self.original_funcs["os.listdir"]
@@ -319,4 +562,11 @@ class DeterministicInterceptor:
             import urllib3.connectionpool
             if "urllib3.urlopen" in self.original_funcs:
                 urllib3.connectionpool.HTTPConnectionPool.urlopen = self.original_funcs["urllib3.urlopen"]
+        except ImportError: pass
+        try:
+            import httpx
+            if "httpx.Client.send" in self.original_funcs:
+                httpx.Client.send = self.original_funcs["httpx.Client.send"]
+            if "httpx.AsyncClient.send" in self.original_funcs:
+                httpx.AsyncClient.send = self.original_funcs["httpx.AsyncClient.send"]
         except ImportError: pass

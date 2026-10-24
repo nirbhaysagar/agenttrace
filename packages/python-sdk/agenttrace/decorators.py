@@ -344,6 +344,12 @@ class step:
             if interceptor:
                 interceptor.consume_tool_event(self.name, self.type)
 
+    async def __aenter__(self):
+        return self.__enter__()
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        return self.__exit__(exc_type, exc_val, exc_tb)
+
 def set_result(result_data: Any):
     """Update the current step with a final result."""
     current_step = _get_active_step()

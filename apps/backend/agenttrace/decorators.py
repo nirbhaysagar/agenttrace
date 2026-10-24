@@ -44,21 +44,9 @@ def run(name: Optional[str] = None):
         except (OSError, TypeError):
             _full_file_source = _source_code
 
-        # Auto-capture pip dependencies for sandbox reproducibility
-        _requirements = ""
-        try:
-            # Skip slow pip freeze during testing
-            _pip_result = type('obj', (object,), {'stdout': 'pip freeze skipped (speed optimization)', 'returncode': 0})()
-            if _pip_result.returncode == 0:
-                _requirements = _pip_result.stdout.strip()
-        except Exception:
-            pass
-
         if is_async:
             @wraps(func)
             async def async_wrapper(*args, **kwargs):
-                status = "in_progress"
-                result = None
                 from .context import _trace_ctx, _push_event
                 from .config import Config
                 from .interceptor import DeterministicInterceptor
@@ -67,10 +55,28 @@ def run(name: Optional[str] = None):
                 # Early-bird Sandbox Init (Phase 7 Hardening)
                 # Auto-setup config from env vars in case user didn't explicitly call agenttrace.init()
                 Config.setup()
-                interceptor = DeterministicInterceptor(mode=Config.mode, replay_events=Config.replay_events)
-                interceptor.setup()
 
                 trace_id = str(uuid.uuid4())
+                start_time_raw = time.time()
+                start_time_iso = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(start_time_raw))
+
+                if Config.mode == "record":
+                    import random
+                    import os
+                    import sys
+                    seed = random.randint(0, 1000000)
+                    env_keys = ["PYTHONHASHSEED", "TZ", "LANG", "LC_ALL", "PATH"]
+                    captured_env = {k: os.environ.get(k) for k in env_keys if k in os.environ}
+                    captured_argv = sys.argv
+                else:
+                    seed = Config.replay_events[0].get("payload", {}).get("seed", 42) if Config.replay_events else 42
+                    start_time_raw = Config.replay_events[0].get("timestamp_epoch", start_time_raw) if Config.replay_events else start_time_raw
+                    captured_env = {}
+                    captured_argv = []
+
+                interceptor = DeterministicInterceptor(mode=Config.mode, replay_events=Config.replay_events)
+                interceptor.setup(initial_epoch=start_time_raw)
+
                 trace_data = {
                     "trace_id": trace_id,
                     "metadata": {
@@ -85,39 +91,20 @@ def run(name: Optional[str] = None):
                         "span_id": str(uuid.uuid4()),
                         "name": f"agent.{agent_name}",
                         "kind": "server",
-                        "start_time": time.time(),
+                        "start_time": start_time_raw,
                         "attributes": {}
                     }],
-                    "source_code": _full_file_source,
-                    "requirements": _requirements
+                    "source_code": _full_file_source
                 }
                 
                 # Setup context
                 token = _trace_ctx.set(trace_data)
-                start_time_iso = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
-                
-                if Config.mode == "record":
-                    import random
-                    import os
-                    import sys
-                    seed = random.randint(0, 1000000)
-                    random.seed(seed)
-                    
-                    # Capture filtered environment for drift detection
-                    # We only capture keys that affect determinism/behavior (excluding secrets)
-                    env_keys = ["PYTHONHASHSEED", "TZ", "LANG", "LC_ALL", "PATH"]
-                    captured_env = {k: os.environ.get(k) for k in env_keys if k in os.environ}
-                    captured_argv = sys.argv
-                else:
-                    seed = Config.replay_events[0].get("payload", {}).get("seed", 42) if Config.replay_events else 42
-                    captured_env = {}
-                    captured_argv = []
 
                 _push_event({
                     "seq": 0,
                     "type": "agent_start",
                     "timestamp": start_time_iso,
-                    "timestamp_epoch": time.time(),
+                    "timestamp_epoch": start_time_raw,
                     "payload": {
                         "agent": agent_name, 
                         "args": repr(args), 
@@ -127,6 +114,9 @@ def run(name: Optional[str] = None):
                     }
                 })
                 
+                import random
+                random.seed(seed)
+
                 try:
                     result = await func(*args, **kwargs)
                     status = "completed"
@@ -190,10 +180,28 @@ def run(name: Optional[str] = None):
                 # Early-bird Sandbox Init (Phase 7 Hardening)
                 # Auto-setup config from env vars in case user didn't explicitly call agenttrace.init()
                 Config.setup()
-                interceptor = DeterministicInterceptor(mode=Config.mode, replay_events=Config.replay_events)
-                interceptor.setup()
 
                 trace_id = str(uuid.uuid4())
+                start_time_raw = time.time()
+                start_time_iso = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(start_time_raw))
+
+                if Config.mode == "record":
+                    import random
+                    import os
+                    import sys
+                    seed = random.randint(0, 1000000)
+                    env_keys = ["PYTHONHASHSEED", "TZ", "LANG", "LC_ALL", "PATH"]
+                    captured_env = {k: os.environ.get(k) for k in env_keys if k in os.environ}
+                    captured_argv = sys.argv
+                else:
+                    seed = Config.replay_events[0].get("payload", {}).get("seed", 42) if Config.replay_events else 42
+                    start_time_raw = Config.replay_events[0].get("timestamp_epoch", start_time_raw) if Config.replay_events else start_time_raw
+                    captured_env = {}
+                    captured_argv = []
+
+                interceptor = DeterministicInterceptor(mode=Config.mode, replay_events=Config.replay_events)
+                interceptor.setup(initial_epoch=start_time_raw)
+
                 trace_data = {
                     "trace_id": trace_id,
                     "metadata": {
@@ -208,35 +216,19 @@ def run(name: Optional[str] = None):
                         "span_id": str(uuid.uuid4()),
                         "name": f"agent.{agent_name}",
                         "kind": "server",
-                        "start_time": time.time(),
+                        "start_time": start_time_raw,
                         "attributes": {}
                     }],
-                    "source_code": _full_file_source,
-                    "requirements": _requirements
+                    "source_code": _full_file_source
                 }
                 
                 token = _trace_ctx.set(trace_data)
-                start_time_iso = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
-                
-                if Config.mode == "record":
-                    import random
-                    import os
-                    import sys
-                    seed = random.randint(0, 1000000)
-                    random.seed(seed)
-                    env_keys = ["PYTHONHASHSEED", "TZ", "LANG", "LC_ALL", "PATH"]
-                    captured_env = {k: os.environ.get(k) for k in env_keys if k in os.environ}
-                    captured_argv = sys.argv
-                else:
-                    seed = Config.replay_events[0].get("payload", {}).get("seed", 42) if Config.replay_events else 42
-                    captured_env = {}
-                    captured_argv = []
 
                 _push_event({
                     "seq": 0,
                     "type": "agent_start",
                     "timestamp": start_time_iso,
-                    "timestamp_epoch": time.time(),
+                    "timestamp_epoch": start_time_raw,
                     "payload": {
                         "agent": agent_name, 
                         "args": repr(args), 
@@ -246,6 +238,9 @@ def run(name: Optional[str] = None):
                     }
                 })
                 
+                import random
+                random.seed(seed)
+
                 try:
                     result = func(*args, **kwargs)
                     status = "completed"
@@ -321,12 +316,13 @@ class step:
     def __enter__(self):
         ctx = _get_or_create_trace()
         self.step_data = {
-            "seq": 0, # _push_event will set this
+            "seq": ctx["event_count"],
             "type": self.type,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
             "timestamp_epoch": time.time(),
             "payload": self.payload
         }
+        ctx["event_count"] += 1
         
         # Store in context so inner code can update results
         self.token = _step_ctx.set(self.step_data)
@@ -337,8 +333,16 @@ class step:
             self.step_data["type"] = "error"
             self.step_data["payload"]["error"] = str(exc_val)
             
-        _push_event(self.step_data)
+        trace = _get_or_create_trace()
+        trace["events"].append(self.step_data)
         _step_ctx.reset(self.token)
+
+        from .config import Config
+        from .interceptor import get_active_interceptor
+        if Config.mode == "replay":
+            interceptor = get_active_interceptor()
+            if interceptor:
+                interceptor.consume_tool_event(self.name, self.type)
 
     async def __aenter__(self):
         return self.__enter__()

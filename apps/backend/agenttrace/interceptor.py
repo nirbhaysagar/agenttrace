@@ -15,6 +15,11 @@ class DeterminismLeakError(Exception):
     """Raised when the agent attempts unmanaged I/O (bypass) during deterministic replay."""
     pass
 
+_active_interceptor = None
+
+def get_active_interceptor():
+    return _active_interceptor
+
 class DeterministicInterceptor:
     """
     The core engine for "Choice 1" Deterministic Execution - Governance Tier.
@@ -27,9 +32,20 @@ class DeterministicInterceptor:
         self.governance_level = getattr(Config, "governance_level", "relaxed")
         # Use deepcopy to prevent shared state leakage in parallel replays
         self.replay_events = copy.deepcopy(replay_events) if replay_events else []
-        # Pool for matching out-of-order events (async/threads)
-        self.unconsumed_events = copy.deepcopy(self.replay_events)
+        self.cursor = 0  
         self.original_funcs = {}
+
+    def consume_tool_event(self, name: str = None, event_type: str = "tool_call"):
+        while self.cursor < len(self.replay_events):
+            evt = self.replay_events[self.cursor]
+            if evt.get("type") == event_type or evt.get("type") in ("tool_call", "observation", "thought"):
+                self.cursor += 1
+                return evt
+            if evt.get("type") in ("agent_start", "agent_complete"):
+                self.cursor += 1
+                continue
+            break
+        return None
 
     def _handle_leak(self, message):
         """Standardized handler for causal leaks."""
@@ -38,19 +54,22 @@ class DeterministicInterceptor:
         else:
             print(f"[AgentTrace] WARNING: Causal Leak Detected - {message}")
     
-    def setup(self):
+    def setup(self, initial_epoch=None):
         """Applies the runtime patches."""
+        global _active_interceptor
+        _active_interceptor = self
+
         if self.mode == "record":
             print("[AgentTrace] Initializing Network Capture (Record Mode).")
+            self._patch_time(initial_epoch)
             self._patch_network_record()
-            self._patch_boundary_execution()  # Install socket proxy for recording
         elif self.mode == "replay":
-            print(f"[AgentTrace] Initializing {self.governance_level} sandbox. Events: {len(self.replay_events)}")
+            print(f"[AgentTrace] Initializing governance sandbox. Events: {len(self.replay_events)}")
             from .validator import validate_trace_integrity
             validate_trace_integrity(self.replay_events)
             
             self._patch_environment() 
-            self._patch_time()
+            self._patch_time(initial_epoch)
             self._patch_randomness()
             self._patch_network_replay()
             self._patch_boundary_execution()
@@ -59,6 +78,9 @@ class DeterministicInterceptor:
         
     def teardown(self):
         """Removes the runtime patches and verifies exact consumption."""
+        global _active_interceptor
+        _active_interceptor = None
+
         print("[AgentTrace] Tearing down Deterministic Sandbox/Recorder.")
         self._restore_boundaries()
         self._restore_time()
@@ -66,15 +88,12 @@ class DeterministicInterceptor:
         self._restore_network()
         
         if self.mode == "replay":
-            # Any remaining unconsumed critical events imply divergence
-            for evt in self.unconsumed_events:
+            for evt in self.replay_events[self.cursor:]:
                 evt_type = evt.get("type")
-                if evt_type in ("network_call", "tool_call", "socket_call"):
-                    msg = f"[AgentTrace] Sandbox Divergence: Unconsumed I/O event {evt_type} at seq {evt.get('seq')}."
-                    if self.governance_level == "governance":
-                        raise ReplayMismatchError(msg)
-                    else:
-                        print(f"WARNING: {msg}")
+                if evt_type in ("network_call", "tool_call"):
+                    raise ReplayMismatchError(
+                        f"[AgentTrace] Sandbox Divergence: Unconsumed I/O event at seq {evt.get('seq')}."
+                    )
 
     # --- Environment Lockdown ---
     def _patch_environment(self):
@@ -86,28 +105,35 @@ class DeterministicInterceptor:
             if key in recorded_env:
                 actual_val = os.environ.get(key)
                 if actual_val != recorded_env[key]:
-                    msg = f"Env Drift '{key}'. Trace: '{recorded_env[key]}', Actual: '{actual_val}'"
-                    if self.governance_level == "governance":
-                        print(f"[AgentTrace] Governance Error: {msg}")
-                    else:
-                        print(f"[AgentTrace] Warning: {msg}")
+                    print(f"[AgentTrace] Warning: Env Drift '{key}'. Trace: '{recorded_env[key]}', Actual: '{actual_val}'")
 
     # --- Time Freezing ---
-    def _patch_time(self):
+    def _patch_time(self, initial_epoch=None):
         import time
         import datetime
-        if not self.replay_events: return
-        initial_epoch = self.replay_events[0].get("timestamp_epoch", time.time())
+        if initial_epoch is None:
+            if self.replay_events:
+                initial_epoch = self.replay_events[0].get("timestamp_epoch", time.time())
+            else:
+                initial_epoch = time.time()
 
         self.original_funcs["time.time"] = time.time
-        self.original_funcs["datetime.datetime.now"] = datetime.datetime.now
-        self.original_funcs["datetime.datetime.utcnow"] = datetime.datetime.utcnow
+        self.original_funcs["time.perf_counter"] = time.perf_counter
+        self.original_funcs["time.monotonic"] = time.monotonic
+        self.original_funcs["time.process_time"] = time.process_time
+        self.original_funcs["time.thread_time"] = time.thread_time
+        self.original_funcs["datetime.datetime"] = datetime.datetime
 
         def mocked_time():
-            # For time, we just return the initial stable epoch to ensure determinism
+            if self.cursor < len(self.replay_events):
+                return self.replay_events[self.cursor].get("timestamp_epoch", initial_epoch)
             return initial_epoch
 
         time.time = mocked_time
+        time.perf_counter = lambda: mocked_time() - initial_epoch
+        time.monotonic = time.perf_counter
+        time.process_time = time.perf_counter
+        time.thread_time = time.perf_counter
         
         class MockDateTime(datetime.datetime):
             @classmethod
@@ -119,12 +145,12 @@ class DeterministicInterceptor:
     def _restore_time(self):
         import time
         import datetime
-        keys = ["time.time"]
+        keys = ["time.time", "time.perf_counter", "time.monotonic", "time.process_time", "time.thread_time"]
         for k in keys:
             if k in self.original_funcs:
                 setattr(time, k.split('.')[1], self.original_funcs[k])
-        if "datetime.datetime.now" in self.original_funcs:
-            datetime.datetime = self.original_funcs["datetime.datetime.now"].__self__ # type: ignore
+        if "datetime.datetime" in self.original_funcs:
+            datetime.datetime = self.original_funcs["datetime.datetime"]
 
     # --- Randomness & Entropy Lockdown ---
     def _patch_randomness(self):
@@ -147,6 +173,7 @@ class DeterministicInterceptor:
             return self.original_funcs["os.urandom"](n) if self.governance_level == "relaxed" else None
         os.urandom = mocked_urandom
         
+        # Patch secrets module if already imported
         if "secrets" in sys.modules:
             import secrets
             self.original_funcs["secrets.token_bytes"] = secrets.token_bytes
@@ -154,8 +181,9 @@ class DeterministicInterceptor:
             self.original_funcs["secrets.token_urlsafe"] = secrets.token_urlsafe
             secrets.token_bytes = mocked_urandom
             secrets.token_hex = lambda n=None: mocked_urandom(n or 32).hex()
-            secrets.token_urlsafe = lambda n=None: mocked_urandom(n or 32).hex() 
+            secrets.token_urlsafe = lambda n=None: mocked_urandom(n or 32).hex() # Simplified
 
+        # Patch random.SystemRandom
         import random
         self.original_funcs["random.SystemRandom"] = random.SystemRandom
         class MockSystemRandom(random.SystemRandom):
@@ -165,20 +193,10 @@ class DeterministicInterceptor:
             def getrandbits(self, k): 
                 self.outer._handle_leak("SystemRandom leak")
                 return super().getrandbits(k)
+        
+        # We need a way to pass 'self' to the class
         MockSystemRandom.outer = self
         random.SystemRandom = MockSystemRandom
-
-    def _restore_randomness(self):
-        import random
-        if "uuid.uuid4" in self.original_funcs: uuid.uuid4 = self.original_funcs["uuid.uuid4"]
-        if "os.urandom" in self.original_funcs: os.urandom = self.original_funcs["os.urandom"]
-        if "random.SystemRandom" in self.original_funcs: random.SystemRandom = self.original_funcs["random.SystemRandom"]
-        if "secrets" in sys.modules:
-            import secrets
-            if "secrets.token_bytes" in self.original_funcs:
-                secrets.token_bytes = self.original_funcs["secrets.token_bytes"]
-                secrets.token_hex = self.original_funcs["secrets.token_hex"]
-                secrets.token_urlsafe = self.original_funcs["secrets.token_urlsafe"]
 
     def _patch_filesystem(self):
         import builtins
@@ -194,6 +212,18 @@ class DeterministicInterceptor:
             self._handle_leak(f"listdir ({path})")
             return self.original_funcs["os.listdir"](path)
         os.listdir = mocked_listdir
+
+    def _restore_randomness(self):
+        import random
+        if "uuid.uuid4" in self.original_funcs: uuid.uuid4 = self.original_funcs["uuid.uuid4"]
+        if "os.urandom" in self.original_funcs: os.urandom = self.original_funcs["os.urandom"]
+        if "random.SystemRandom" in self.original_funcs: random.SystemRandom = self.original_funcs["random.SystemRandom"]
+        if "secrets" in sys.modules:
+            import secrets
+            if "secrets.token_bytes" in self.original_funcs:
+                secrets.token_bytes = self.original_funcs["secrets.token_bytes"]
+                secrets.token_hex = self.original_funcs["secrets.token_hex"]
+                secrets.token_urlsafe = self.original_funcs["secrets.token_urlsafe"]
 
     # --- Network & Boundary ---
     def _patch_network_record(self):
@@ -221,12 +251,11 @@ class DeterministicInterceptor:
             urllib3.connectionpool.HTTPConnectionPool.urlopen = recording_urlopen
         except ImportError: pass
 
-        # 2. httpx (used by OpenAI, Anthropic, Groq)
+        # 2. httpx (OpenAI, Anthropic, Groq)
         try:
             import httpx
             from .context import _push_event
             
-            # Sync Client
             self.original_funcs["httpx.Client.send"] = httpx.Client.send
             def recording_httpx_send(client_self, request, **kwargs):
                 full_url = str(request.url)
@@ -246,7 +275,6 @@ class DeterministicInterceptor:
                 return res
             httpx.Client.send = recording_httpx_send
 
-            # Async Client 
             self.original_funcs["httpx.AsyncClient.send"] = httpx.AsyncClient.send
             async def recording_httpx_send_async(client_self, request, **kwargs):
                 full_url = str(request.url)
@@ -276,81 +304,45 @@ class DeterministicInterceptor:
                 return self._make_mocked_urllib3_response(matched_event, full_url)
             urllib3.connectionpool.HTTPConnectionPool.urlopen = mocked_urlopen_urllib3
         except ImportError: pass
-        
+
         # 2. httpx lookup
         try:
             import httpx
             def mocked_httpx_send(client_self, request, **kwargs):
                 full_url = str(request.url)
-                matched_event = self._consume_network_event(request.method, full_url, request.content)
+                matched_event = self._consume_network_event(request.method, full_url, getattr(request, "content", None))
                 return self._make_mocked_httpx_response(matched_event, request)
             httpx.Client.send = mocked_httpx_send
 
             async def mocked_httpx_send_async(client_self, request, **kwargs):
                 full_url = str(request.url)
-                matched_event = self._consume_network_event(request.method, full_url, request.content)
+                matched_event = self._consume_network_event(request.method, full_url, getattr(request, "content", None))
                 return self._make_mocked_httpx_response(matched_event, request)
             httpx.AsyncClient.send = mocked_httpx_send_async
         except ImportError: pass
 
     def _consume_network_event(self, method, url, body=None):
-        from .context import _get_step_name
-        current_step = _get_step_name()
-        
-        # Search for a matching event in the pool
-        match_idx = -1
-        for i, evt in enumerate(self.unconsumed_events):
-            if evt.get("type") == "network_call":
-                payload = evt.get("payload", {})
-                # Strictly match Method + URL + Step Context
-                if payload.get("method") == method and payload.get("url") == url:
-                    # In async/threads, we prefer exact step matches
-                    if payload.get("step") == current_step:
-                        match_idx = i
-                        break
-                    # Fallback: if no exact step match found yet, keep looking or take first URL match as last resort
-                    elif match_idx == -1:
-                        match_idx = i
-
-        if match_idx == -1:
-            msg = f"Unexpected network {method} {url} in step '{current_step}'"
-            if self.governance_level == "governance":
-                raise ReplayMismatchError(f"[AgentTrace] Sandbox Divergence: {msg}")
-            else:
-                print(f"[AgentTrace] WARNING: {msg}")
-                return {"payload": {"status": 200, "response": "{}"}}
-        
-        return self.unconsumed_events.pop(match_idx)
-
-    def _consume_socket_event(self, op, address):
-        from .context import _get_step_name
-        current_step = _get_step_name()
-        
-        match_idx = -1
-        for i, evt in enumerate(self.unconsumed_events):
-            payload = evt.get("payload", {})
-            if evt.get("type") == "socket_call" and payload.get("op") == op:
-                # Normalize address for comparison (json converts tuples to lists)
-                recorded_addr = payload.get("address")
-                if isinstance(recorded_addr, list): recorded_addr = tuple(recorded_addr)
-                runtime_addr = address
-                if isinstance(runtime_addr, list): runtime_addr = tuple(runtime_addr)
-
-                if recorded_addr == runtime_addr:
-                    if payload.get("step") == current_step:
-                        match_idx = i
-                        break
-                    elif match_idx == -1:
-                        match_idx = i
-        
-        if match_idx == -1:
-            msg = f"Unexpected socket {op} to {address} in step '{current_step}'"
-            if self.governance_level == "relaxed":
-                print(f"[AgentTrace] WARNING: {msg}")
-                return None
-            raise ReplayMismatchError(f"[AgentTrace] Sandbox Divergence: {msg}")
-        
-        return self.unconsumed_events.pop(match_idx)
+        while self.cursor < len(self.replay_events):
+            evt = self.replay_events[self.cursor]
+            if evt.get("type") in ("network_call", "tool_call"): break
+            self.cursor += 1
+        if self.cursor >= len(self.replay_events):
+            raise ReplayMismatchError(f"[AgentTrace] Sandbox Divergence: Unexpected network {method} {url}")
+        evt = self.replay_events[self.cursor]
+        if url != evt.get("payload", {}).get("url", ""):
+            # Fallback scan for async reordering
+            matched_idx = None
+            for idx in range(self.cursor, len(self.replay_events)):
+                cand = self.replay_events[idx]
+                if cand.get("type") == "network_call" and cand.get("payload", {}).get("url") == url and cand.get("payload", {}).get("method") == method:
+                    matched_idx = idx
+                    break
+            if matched_idx is not None:
+                evt = self.replay_events.pop(matched_idx)
+                return evt
+            raise ReplayMismatchError(f"[AgentTrace] Sandbox Divergence: Expected '{evt.get('payload', {}).get('url')}' but got '{url}'")
+        self.cursor += 1
+        return evt
 
     def _make_mocked_urllib3_response(self, matched_event, full_url):
         payload = matched_event.get("payload", {})
@@ -373,55 +365,34 @@ class DeterministicInterceptor:
                 import base64
                 data = base64.b64decode(data)
         import httpx
-        res = httpx.Response(
+        return httpx.Response(
             status_code=payload.get("status", 200),
             content=data,
             request=request,
         )
-        return res
 
     def _patch_boundary_execution(self):
         import socket, subprocess
         self.original_funcs["socket.getaddrinfo"] = socket.getaddrinfo
         self.original_funcs["socket.socket"] = socket.socket
-        
         outer = self
         original_socket_cls = self.original_funcs["socket.socket"]
 
         if self.mode == "record":
-            # --- RECORD MODE: Method-level monkey-patching ---
-            # Patch connect/send/recv on the socket class prototype to record events
-            # without replacing the class itself (keeps httpx, SSL, etc. working).
             original_connect = socket.socket.connect
             original_send = socket.socket.send
             original_sendall = socket.socket.sendall
             original_recv = socket.socket.recv
             original_recv_into = socket.socket.recv_into
             original_close = socket.socket.close
-            
-            # Track socket addresses by socket id (thread-safe enough for our purposes)
-            # Memory leak prevented by clearing on close()
             _socket_addresses = {}
 
             def recording_connect(sock_self, address):
-                from .context import _capturing, _get_step_name, _push_event
                 _socket_addresses[id(sock_self)] = address
-                if not _capturing.get():
-                    try:
-                        _push_event({
-                            "seq": 0, "type": "socket_call", "timestamp_epoch": time.time(),
-                            "payload": {
-                                "op": "connect",
-                                "address": list(address) if isinstance(address, (list, tuple)) else address,
-                                "step": _get_step_name()
-                            }
-                        })
-                    except Exception:
-                        pass
                 return original_connect(sock_self, address)
 
             def recording_send(sock_self, data, flags=0):
-                from .context import _capturing, _get_step_name, _push_event
+                from .context import _capturing, _push_event
                 res = original_send(sock_self, data, flags)
                 if not _capturing.get():
                     try:
@@ -432,16 +403,14 @@ class DeterministicInterceptor:
                             "payload": {
                                 "op": "send",
                                 "address": list(addr) if isinstance(addr, (list, tuple)) else addr,
-                                "data": base64.b64encode(data).decode("utf-8"),
-                                "step": _get_step_name()
+                                "data": base64.b64encode(data[:res]).decode("utf-8")
                             }
                         })
-                    except Exception:
-                        pass
+                    except Exception: pass
                 return res
 
             def recording_sendall(sock_self, data, flags=0):
-                from .context import _capturing, _get_step_name, _push_event
+                from .context import _capturing, _push_event
                 res = original_sendall(sock_self, data, flags)
                 if not _capturing.get():
                     try:
@@ -452,16 +421,14 @@ class DeterministicInterceptor:
                             "payload": {
                                 "op": "send",
                                 "address": list(addr) if isinstance(addr, (list, tuple)) else addr,
-                                "data": base64.b64encode(data).decode("utf-8"),
-                                "step": _get_step_name()
+                                "data": base64.b64encode(data).decode("utf-8")
                             }
                         })
-                    except Exception:
-                        pass
+                    except Exception: pass
                 return res
 
             def recording_recv(sock_self, buflen, flags=0):
-                from .context import _capturing, _get_step_name, _push_event
+                from .context import _capturing, _push_event
                 data = original_recv(sock_self, buflen, flags)
                 if not _capturing.get():
                     try:
@@ -472,42 +439,34 @@ class DeterministicInterceptor:
                             "payload": {
                                 "op": "recv",
                                 "address": list(addr) if isinstance(addr, (list, tuple)) else addr,
-                                "data": base64.b64encode(data).decode("utf-8"),
-                                "step": _get_step_name()
+                                "data": base64.b64encode(data).decode("utf-8")
                             }
                         })
-                    except Exception:
-                        pass
+                    except Exception: pass
                 return data
 
             def recording_recv_into(sock_self, buffer, nbytes=0, flags=0):
-                from .context import _capturing, _get_step_name, _push_event
+                from .context import _capturing, _push_event
                 res = original_recv_into(sock_self, buffer, nbytes, flags)
                 if not _capturing.get() and res > 0:
                     try:
                         import base64
                         addr = _socket_addresses.get(id(sock_self))
-                        # buffer might be larger than res, only capture the written part
                         data_read = bytes(memoryview(buffer)[:res])
                         _push_event({
                             "type": "socket_call",
                             "payload": {
                                 "op": "recv",
                                 "address": list(addr) if isinstance(addr, (list, tuple)) else addr,
-                                "data": base64.b64encode(data_read).decode("utf-8"),
-                                "step": _get_step_name()
+                                "data": base64.b64encode(data_read).decode("utf-8")
                             }
                         })
-                    except Exception:
-                        pass
+                    except Exception: pass
                 return res
 
             def recording_close(sock_self):
-                # Prevent memory leaks in production tracker
                 _socket_addresses.pop(id(sock_self), None)
                 return original_close(sock_self)
-
-
 
             socket.socket.connect = recording_connect
             socket.socket.send = recording_send
@@ -515,7 +474,7 @@ class DeterministicInterceptor:
             socket.socket.recv = recording_recv
             socket.socket.recv_into = recording_recv_into
             socket.socket.close = recording_close
-            
+
             self.original_funcs["socket.socket.connect"] = original_connect
             self.original_funcs["socket.socket.send"] = original_send
             self.original_funcs["socket.socket.sendall"] = original_sendall
@@ -524,7 +483,6 @@ class DeterministicInterceptor:
             self.original_funcs["socket.socket.close"] = original_close
 
         elif self.mode == "replay":
-            # --- REPLAY MODE: Pure delegation proxy ---
             class AgentTraceSocketProxy:
                 def __init__(self, family=socket.AF_INET, type=socket.SOCK_STREAM, proto=0, fileno=None):
                     self._sock = original_socket_cls(family, type, proto, fileno)
@@ -532,24 +490,24 @@ class DeterministicInterceptor:
 
                 def connect(self, address):
                     self._address = address
-                    outer._consume_socket_event("connect", address)
                     return None
 
                 def send(self, data, flags=0):
-                    outer._consume_socket_event("send", self._address)
                     return len(data)
 
                 def sendall(self, data, flags=0):
                     self.send(data, flags)
 
                 def recv(self, buflen, flags=0):
-                    address = self._address
-                    evt = outer._consume_socket_event("recv", address)
-                    if evt:
-                        import base64
-                        return base64.b64decode(evt["payload"]["data"])
+                    while outer.cursor < len(outer.replay_events):
+                        evt = outer.replay_events[outer.cursor]
+                        if evt.get("type") == "socket_call" and evt.get("payload", {}).get("op") == "recv":
+                            outer.cursor += 1
+                            import base64
+                            return base64.b64decode(evt["payload"]["data"])
+                        outer.cursor += 1
                     return b""
-                    
+
                 def recv_into(self, buffer, nbytes=0, flags=0):
                     data = self.recv(nbytes if nbytes else len(buffer), flags)
                     length = len(data)
@@ -558,14 +516,14 @@ class DeterministicInterceptor:
 
                 def close(self):
                     return self._sock.close()
-                    
+
                 def makefile(self, mode='r', buffering=None, *, encoding=None, errors=None, newline=None):
                     import io
                     return io.BytesIO()
 
                 def __enter__(self):
                     return self
-                    
+
                 def __exit__(self, *args):
                     self.close()
 
@@ -577,21 +535,18 @@ class DeterministicInterceptor:
             def mocked_getaddrinfo(*args, **kwargs):
                 self._handle_leak("DNS leak")
                 return self.original_funcs["socket.getaddrinfo"](*args, **kwargs)
-            
             socket.getaddrinfo = mocked_getaddrinfo
 
-            self.original_funcs["subprocess.Popen"] = subprocess.Popen
-            def mocked_popen(*args, **kwargs):
-                self._handle_leak(f"Subprocess leak ({args[0] if args else 'unknown'})")
-                return self.original_funcs["subprocess.Popen"](*args, **kwargs)
-            subprocess.Popen = mocked_popen
-
+        self.original_funcs["subprocess.Popen"] = subprocess.Popen
+        def mocked_popen(*args, **kwargs):
+            self._handle_leak(f"Subprocess leak ({args[0] if args else 'unknown'})")
+            return self.original_funcs["subprocess.Popen"](*args, **kwargs)
+        subprocess.Popen = mocked_popen
 
     def _restore_boundaries(self):
         import socket, subprocess, builtins, os
         if "socket.getaddrinfo" in self.original_funcs: socket.getaddrinfo = self.original_funcs["socket.getaddrinfo"]
         if "socket.socket" in self.original_funcs: socket.socket = self.original_funcs["socket.socket"]
-        # Restore method-level patches (record mode)
         if "socket.socket.connect" in self.original_funcs: socket.socket.connect = self.original_funcs["socket.socket.connect"]
         if "socket.socket.send" in self.original_funcs: socket.socket.send = self.original_funcs["socket.socket.send"]
         if "socket.socket.sendall" in self.original_funcs: socket.socket.sendall = self.original_funcs["socket.socket.sendall"]
@@ -607,4 +562,11 @@ class DeterministicInterceptor:
             import urllib3.connectionpool
             if "urllib3.urlopen" in self.original_funcs:
                 urllib3.connectionpool.HTTPConnectionPool.urlopen = self.original_funcs["urllib3.urlopen"]
+        except ImportError: pass
+        try:
+            import httpx
+            if "httpx.Client.send" in self.original_funcs:
+                httpx.Client.send = self.original_funcs["httpx.Client.send"]
+            if "httpx.AsyncClient.send" in self.original_funcs:
+                httpx.AsyncClient.send = self.original_funcs["httpx.AsyncClient.send"]
         except ImportError: pass

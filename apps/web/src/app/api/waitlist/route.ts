@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 
 const DATA_FILE = path.join(process.cwd(), "data", "waitlist.json");
+const TMP_FILE = path.join("/tmp", "agenttrace-waitlist.json");
 
 interface WaitlistEntry {
   id: string;
@@ -18,39 +19,109 @@ interface WaitlistEntry {
 }
 
 function getLocalWaitlist(): WaitlistEntry[] {
-  try {
-    if (fs.existsSync(DATA_FILE)) {
-      const content = fs.readFileSync(DATA_FILE, "utf-8");
-      return JSON.parse(content);
-    }
-  } catch (e) {
-    console.error("[Waitlist] Failed to read local file:", e);
+  for (const filePath of [DATA_FILE, TMP_FILE]) {
+    try {
+      if (fs.existsSync(filePath)) {
+        const content = fs.readFileSync(filePath, "utf-8");
+        return JSON.parse(content);
+      }
+    } catch {}
   }
   return [];
 }
 
 function saveLocalWaitlist(entries: WaitlistEntry[]): void {
-  try {
-    const dir = path.dirname(DATA_FILE);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+  // Try writing to project data dir first, fallback to /tmp on serverless
+  for (const filePath of [DATA_FILE, TMP_FILE]) {
+    try {
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(filePath, JSON.stringify(entries, null, 2), "utf-8");
+      return;
+    } catch (e) {
+      // Continue to next path
     }
-    fs.writeFileSync(DATA_FILE, JSON.stringify(entries, null, 2), "utf-8");
-  } catch (e) {
-    console.error("[Waitlist] Failed to write local file:", e);
   }
 }
 
-async function syncToSupabaseStorage(entries: WaitlistEntry[]) {
+async function sendWebhookNotification(entry: WaitlistEntry) {
+  const webhookUrl = process.env.WAITLIST_WEBHOOK_URL;
+  if (!webhookUrl) return;
+
+  try {
+    let payload: any;
+    if (webhookUrl.includes("discord.com/api/webhooks")) {
+      // Rich Discord Embed
+      payload = {
+        username: "AgentTrace Waitlist",
+        avatar_url: "https://agenttrace.com/favicon.ico",
+        embeds: [
+          {
+            title: `🚀 New Waitlist Signup #${entry.position}`,
+            color: 0x000000,
+            fields: [
+              { name: "Email", value: entry.email, inline: true },
+              { name: "Company / Role", value: entry.company || "Not provided", inline: true },
+              { name: "Framework", value: entry.framework || "Not provided", inline: true },
+              { name: "Pain / Use Case", value: entry.useCase || "Not provided", inline: false },
+              { name: "Referral Code", value: `\`${entry.referralCode}\``, inline: true },
+            ],
+            footer: { text: "AgentTrace Deterministic Flight Recorder" },
+            timestamp: entry.createdAt,
+          },
+        ],
+      };
+    } else if (webhookUrl.includes("hooks.slack.com")) {
+      // Slack message format
+      payload = {
+        text: `🚀 *New AgentTrace Waitlist Signup #${entry.position}*\n• *Email:* ${entry.email}\n• *Company:* ${entry.company || 'N/A'}\n• *Framework:* ${entry.framework || 'N/A'}\n• *Use Case:* ${entry.useCase || 'N/A'}`,
+      };
+    } else {
+      // Generic Webhook format (Zapier, Make, n8n, Custom endpoint)
+      payload = {
+        event: "waitlist.signup",
+        ...entry,
+      };
+    }
+
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    console.warn("[Waitlist] Webhook notification warning:", err);
+  }
+}
+
+async function syncToSupabaseStorage(entries: WaitlistEntry[], latestEntry?: WaitlistEntry) {
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
-    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     if (!supabaseUrl || !supabaseKey) return;
 
     const supabase = createClient(supabaseUrl, supabaseKey, {
       auth: { persistSession: false },
     });
 
+    // 1. Try inserting single row into waitlist table if it exists
+    if (latestEntry) {
+      try {
+        await supabase.from("waitlist_signups").insert({
+          email: latestEntry.email,
+          name: latestEntry.name,
+          company: latestEntry.company,
+          framework: latestEntry.framework,
+          use_case: latestEntry.useCase,
+          position: latestEntry.position,
+          referral_code: latestEntry.referralCode,
+        });
+      } catch {}
+    }
+
+    // 2. Sync full snapshot to Storage bucket
     const buffer = Buffer.from(JSON.stringify(entries, null, 2), "utf-8");
     await supabase.storage.from("traces").upload("_waitlist/submissions.json", buffer, {
       contentType: "application/json",
@@ -112,8 +183,11 @@ export async function POST(req: Request) {
     list.push(newEntry);
     saveLocalWaitlist(list);
 
-    // Asynchronously sync snapshot to cloud storage
-    syncToSupabaseStorage(list).catch(() => {});
+    // Asynchronously dispatch webhook notification and sync to cloud storage
+    Promise.all([
+      sendWebhookNotification(newEntry),
+      syncToSupabaseStorage(list, newEntry),
+    ]).catch(() => {});
 
     return NextResponse.json({
       success: true,
