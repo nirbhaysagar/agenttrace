@@ -26,11 +26,14 @@ import {
     Trash2,
     Circle,
     ArrowUpDown,
+    Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useToast } from "@/hooks/use-toast";
 
 interface Trace {
     id: string;
@@ -66,6 +69,44 @@ export default function TracesPage() {
     const [trashTarget, setTrashTarget] = React.useState<Trace | null>(null);
     const [trashDialogOpen, setTrashDialogOpen] = React.useState(false);
     const [trashing, setTrashing] = React.useState(false);
+    const [seeding, setSeeding] = React.useState(false);
+
+    const router = useRouter();
+    const { toast } = useToast();
+
+    const handleSeedTrace = async () => {
+        setSeeding(true);
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            const res = await fetch("/api/trace/seed", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${session?.access_token || ""}`,
+                },
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to seed demo trace");
+
+            toast({
+                title: "Demo Trace Generated",
+                description: `Created "${data.title}" with ${data.eventCount} events.`,
+            });
+
+            await fetchTraces();
+            if (data.traceId) {
+                router.push(`/dashboard/traces/${data.traceId}`);
+            }
+        } catch (err: any) {
+            toast({
+                variant: "destructive",
+                title: "Generation Failed",
+                description: err.message,
+            });
+        } finally {
+            setSeeding(false);
+        }
+    };
 
     const fetchTraces = React.useCallback(async () => {
         setLoading(true);
@@ -206,6 +247,20 @@ export default function TracesPage() {
                     </p>
                 </div>
                 <div className="flex items-center gap-3">
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleSeedTrace}
+                        disabled={seeding}
+                        className="text-xs gap-1.5 h-8 border-border/60 hover:border-brand/40"
+                    >
+                        {seeding ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                            <Sparkles className="w-3 h-3 text-brand" />
+                        )}
+                        {seeding ? "Generating..." : "Seed Demo Trace"}
+                    </Button>
                     <div className="relative">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40" />
                         <Input
@@ -253,11 +308,25 @@ export default function TracesPage() {
                         <span className="text-xs">Loading traces...</span>
                     </div>
                 ) : sortedTraces.length === 0 ? (
-                    <div className="py-14 text-center">
-                        <p className="text-sm text-muted-foreground">{search ? "No matching traces" : "No traces yet"}</p>
-                        <p className="text-xs text-muted-foreground/50 mt-1">
-                            {search ? "Try adjusting your search." : "Run your first trace to see it here."}
+                    <div className="py-16 text-center max-w-sm mx-auto">
+                        <div className="w-10 h-10 rounded-xl bg-brand/10 border border-brand/20 flex items-center justify-center mx-auto mb-3">
+                            <Sparkles className="w-5 h-5 text-brand" />
+                        </div>
+                        <p className="text-sm font-medium text-foreground">{search ? "No matching traces" : "No traces yet"}</p>
+                        <p className="text-xs text-muted-foreground/70 mt-1 mb-5">
+                            {search ? "Try adjusting your search criteria." : "Seed a realistic demo trace to explore DAG scrubbing, tool execution inspection, and multiverse replay."}
                         </p>
+                        {!search && (
+                            <Button
+                                size="sm"
+                                onClick={handleSeedTrace}
+                                disabled={seeding}
+                                className="text-xs gap-2 bg-brand text-brand-foreground hover:bg-brand/90"
+                            >
+                                {seeding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                                {seeding ? "Generating Demo Trace..." : "Seed Demo Trace"}
+                            </Button>
+                        )}
                     </div>
                 ) : (
                     <div>

@@ -12,8 +12,15 @@ import {
     Play,
     X,
     ChevronDown,
+    Copy,
+    Check,
+    Sparkles,
+    Loader2,
+    Key,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { SystemCard } from "@/components/system/SystemCard";
 import { StatusDot, StatusText } from "@/components/system/StatusSystem";
@@ -34,9 +41,13 @@ interface Trace {
 export default function DashboardPage() {
     const { jobs, loading: jobsLoading } = useJobs();
     const { user } = useAuth();
+    const router = useRouter();
 
     const [traces, setTraces] = React.useState<Trace[]>([]);
     const [tracesLoading, setTracesLoading] = React.useState(true);
+    const [copiedPip, setCopiedPip] = React.useState(false);
+    const [copiedSnippet, setCopiedSnippet] = React.useState(false);
+    const [seeding, setSeeding] = React.useState(false);
 
     // Onboarding dismiss state (persisted in localStorage)
     const [onboardingVisible, setOnboardingVisible] = React.useState(true);
@@ -53,6 +64,41 @@ export default function DashboardPage() {
     const showOnboarding = () => {
         setOnboardingVisible(true);
         localStorage.removeItem("agenttrace-onboarding-dismissed");
+    };
+
+    const handleCopyPip = () => {
+        navigator.clipboard.writeText("pip install agenttrace-py");
+        setCopiedPip(true);
+        setTimeout(() => setCopiedPip(false), 2000);
+    };
+
+    const handleCopySnippet = () => {
+        const code = `import agenttrace\n\n@agenttrace.run(name="my-first-agent")\ndef main():\n    return agenttrace.step("think", lambda: "Hello Multiverse!")\n\nmain()`;
+        navigator.clipboard.writeText(code);
+        setCopiedSnippet(true);
+        setTimeout(() => setCopiedSnippet(false), 2000);
+    };
+
+    const handleSeedDemo = async () => {
+        setSeeding(true);
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            const res = await fetch("/api/trace/seed", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${session?.access_token || ""}`,
+                },
+            });
+            const data = await res.json();
+            if (res.ok && data.traceId) {
+                router.push(`/dashboard/traces/${data.traceId}`);
+            }
+        } catch (e) {
+            console.error("Seed trace failed:", e);
+        } finally {
+            setSeeding(false);
+        }
     };
 
     React.useEffect(() => {
@@ -119,6 +165,77 @@ export default function DashboardPage() {
                             <X className="w-4 h-4" />
                         </button>
                     </div>
+
+                    {/* Interactive 3-Step Quickstart Banner */}
+                    <div className="mb-6 bg-card border border-border/80 rounded-2xl p-6 shadow-sm">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-border/50 gap-4">
+                            <div>
+                                <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
+                                    <Sparkles className="w-4 h-4 text-brand" /> Quickstart: Trace your first agent in under 2 minutes
+                                </h3>
+                                <p className="text-xs text-muted-foreground mt-0.5">
+                                    Install the Python SDK, decorate your agent entrypoint, and view deterministic multiverse replays.
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Button
+                                    size="sm"
+                                    onClick={handleSeedDemo}
+                                    disabled={seeding}
+                                    className="text-xs gap-1.5 h-8 bg-brand text-brand-foreground hover:bg-brand/90"
+                                >
+                                    {seeding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                                    {seeding ? "Generating..." : "1-Click Demo Trace"}
+                                </Button>
+                                <Link href="/dashboard/settings">
+                                    <Button variant="outline" size="sm" className="text-xs gap-1.5 h-8 border-border/60">
+                                        <Key className="w-3.5 h-3.5 text-muted-foreground" /> API Keys
+                                    </Button>
+                                </Link>
+                            </div>
+                        </div>
+
+                        <div className="grid md:grid-cols-2 gap-4 mt-4">
+                            {/* Step 1: Install */}
+                            <div className="bg-secondary/40 border border-border/60 rounded-xl p-3.5 flex flex-col justify-between">
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="text-[11px] font-semibold text-foreground tracking-wide uppercase">
+                                        Step 1: Install SDK
+                                    </span>
+                                    <button
+                                        onClick={handleCopyPip}
+                                        className="text-muted-foreground/60 hover:text-foreground transition-colors"
+                                        title="Copy pip install"
+                                    >
+                                        {copiedPip ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                                    </button>
+                                </div>
+                                <code className="text-xs font-mono text-muted-foreground bg-background/60 border border-border/40 rounded-lg px-2.5 py-2 block overflow-x-auto">
+                                    pip install agenttrace-py
+                                </code>
+                            </div>
+
+                            {/* Step 2: Decorate */}
+                            <div className="bg-secondary/40 border border-border/60 rounded-xl p-3.5 flex flex-col justify-between">
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="text-[11px] font-semibold text-foreground tracking-wide uppercase">
+                                        Step 2: Add 3-line wrapper
+                                    </span>
+                                    <button
+                                        onClick={handleCopySnippet}
+                                        className="text-muted-foreground/60 hover:text-foreground transition-colors"
+                                        title="Copy code snippet"
+                                    >
+                                        {copiedSnippet ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                                    </button>
+                                </div>
+                                <code className="text-xs font-mono text-muted-foreground bg-background/60 border border-border/40 rounded-lg px-2.5 py-2 block overflow-x-auto whitespace-pre">
+{`import agenttrace\n@agenttrace.run(name="my-agent")\ndef main(): return agenttrace.step("think", lambda: "ok")`}
+                                </code>
+                            </div>
+                        </div>
+                    </div>
+
                     <div className="grid gap-6 sm:grid-cols-3">
                         {[
                             {
