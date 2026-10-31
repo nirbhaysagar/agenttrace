@@ -62,6 +62,9 @@ Documentation = "https://agenttrace.com/docs"
 Repository = "https://github.com/nirbhaysagar/agenttrace"
 Issues = "https://github.com/nirbhaysagar/agenttrace/issues"
 
+[project.scripts]
+agenttrace = "agenttrace.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["agenttrace*"]

@@ -1,3 +1,5 @@
+import os
+import sys
 import time
 import uuid
 import inspect
@@ -62,8 +64,6 @@ def run(name: Optional[str] = None):
 
                 if Config.mode == "record":
                     import random
-                    import os
-                    import sys
                     seed = random.randint(0, 1000000)
                     env_keys = ["PYTHONHASHSEED", "TZ", "LANG", "LC_ALL", "PATH"]
                     captured_env = {k: os.environ.get(k) for k in env_keys if k in os.environ}
@@ -151,6 +151,15 @@ def run(name: Optional[str] = None):
                     
                     # Submit to background client
                     from .config import Config
+                    dump_file = os.environ.get("AGENTTRACE_DUMP_FILE")
+                    if dump_file:
+                        try:
+                            import json as _djson
+                            with open(dump_file, "w", encoding="utf-8") as _df:
+                                _djson.dump(trace_data, _df, indent=2)
+                        except Exception as _de:
+                            print(f"[AgentTrace Warning] Failed dumping trace file: {_de}")
+
                     if Config.mode == "record":
                         AgentTraceClient.send_trace(trace_data)
                     else:
@@ -187,8 +196,6 @@ def run(name: Optional[str] = None):
 
                 if Config.mode == "record":
                     import random
-                    import os
-                    import sys
                     seed = random.randint(0, 1000000)
                     env_keys = ["PYTHONHASHSEED", "TZ", "LANG", "LC_ALL", "PATH"]
                     captured_env = {k: os.environ.get(k) for k in env_keys if k in os.environ}
@@ -273,6 +280,15 @@ def run(name: Optional[str] = None):
                     trace_data.pop("lock", None)
                     
                     from .config import Config
+                    dump_file = os.environ.get("AGENTTRACE_DUMP_FILE")
+                    if dump_file:
+                        try:
+                            import json as _djson
+                            with open(dump_file, "w", encoding="utf-8") as _df:
+                                _djson.dump(trace_data, _df, indent=2)
+                        except Exception as _de:
+                            print(f"[AgentTrace Warning] Failed dumping trace file: {_de}")
+
                     if Config.mode == "record":
                         AgentTraceClient.send_trace(trace_data)
                     else:

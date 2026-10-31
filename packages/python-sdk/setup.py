@@ -25,6 +25,11 @@ setup(
         "openai": ["openai>=1.0.0"],
         "all": ["langchain-core>=0.1.0", "openai>=1.0.0"]
     },
+    entry_points={
+        "console_scripts": [
+            "agenttrace=agenttrace.cli:main",
+        ],
+    },
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
