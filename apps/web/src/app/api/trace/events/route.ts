@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { createClient } from "@supabase/supabase-js";
+import { resolveAuth } from "@/lib/api-auth";
 
 /**
  * GET /api/trace/events?traceId=xxx
  *
  * Returns events for a trace, with org isolation enforced server-side.
- * Auth: JWT from browser session.
+ * Auth: JWT from browser session (bypassed if NEXT_PUBLIC_SKIP_AUTH=true).
  *
  * Data sources (cascading):
  *   1. trace_events DB table
@@ -19,45 +19,20 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ error: "Missing traceId" }, { status: 400 });
         }
 
-        // 1. Auth — resolve user from JWT
-        const authHeader = req.headers.get("Authorization");
-        if (!authHeader) {
+        // 1. Auth — resolve user from JWT or skip-auth dev mock
+        const auth = await resolveAuth(req);
+        if (!auth) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-        const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-        const supabaseRest = createClient(supabaseUrl, supabaseAnonKey, {
-            auth: { persistSession: false },
-        });
-
-        const token = authHeader.replace("Bearer ", "");
-        const { data: { user }, error: authError } = await supabaseRest.auth.getUser(token);
-        if (authError || !user) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
-
-        // 2. Org isolation — verify membership
-        const { data: membership } = await supabaseAdmin
-            .from("org_members")
-            .select("org_id")
-            .eq("user_id", user.id)
-            .limit(1)
-            .single();
-
-        if (!membership?.org_id) {
-            return NextResponse.json({ error: "No organization" }, { status: 403 });
-        }
-
-        // 3. Verify trace belongs to user's org
+        // 2. Verify trace belongs to user's org
         const { data: trace } = await supabaseAdmin
             .from("traces")
-            .select("id")
+            .select("id, org_id")
             .eq("id", traceId)
-            .eq("org_id", membership.org_id)
             .single();
 
-        if (!trace) {
+        if (!trace || (process.env.NEXT_PUBLIC_SKIP_AUTH !== "true" && trace.org_id !== auth.orgId)) {
             return NextResponse.json({ error: "Trace not found" }, { status: 404 });
         }
 

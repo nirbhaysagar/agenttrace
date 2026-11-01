@@ -110,6 +110,23 @@ export default function TracesPage() {
 
     const fetchTraces = React.useCallback(async () => {
         setLoading(true);
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            const res = await fetch("/api/traces", {
+                headers: { Authorization: `Bearer ${session?.access_token || "dev-mock-token"}` },
+            });
+            if (res.ok) {
+                const json = await res.json();
+                if (json.traces) {
+                    setTraces(json.traces);
+                    setLoading(false);
+                    return;
+                }
+            }
+        } catch (e) {
+            console.warn("API traces fetch failed, falling back to direct query:", e);
+        }
+
         const { data, error } = await supabase
             .from("traces")
             .select("*")

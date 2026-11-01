@@ -1,46 +1,23 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabase";
 import { computeCausalHash } from "@/lib/replay-simulation";
+import { resolveAuth } from "@/lib/api-auth";
 import crypto from "crypto";
 
 /**
  * POST /api/trace/seed
  * Generates a realistic sample agent execution trace for onboarding & interactive testing.
- * Protected by user session authentication.
+ * Protected by user session authentication (bypassed when NEXT_PUBLIC_SKIP_AUTH=true).
  */
 export async function POST(req: Request) {
     try {
-        const authHeader = req.headers.get("Authorization");
-        if (!authHeader) {
+        const auth = await resolveAuth(req);
+        if (!auth) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-        const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-        const supabaseRest = createClient(supabaseUrl, supabaseAnonKey, {
-            auth: { persistSession: false },
-        });
-
-        const token = authHeader.replace("Bearer ", "");
-        const { data: { user }, error: authError } = await supabaseRest.auth.getUser(token);
-        if (authError || !user) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
-
-        const { data: membership } = await supabaseAdmin
-            .from("org_members")
-            .select("org_id")
-            .eq("user_id", user.id)
-            .limit(1)
-            .single();
-
-        if (!membership?.org_id) {
-            return NextResponse.json({ error: "No organization found" }, { status: 403 });
-        }
-
-        const orgId = membership.org_id;
-        const traceId = `trace_${crypto.randomBytes(8).toString("hex")}`;
+        const { user, orgId } = auth;
+        const traceId = crypto.randomUUID();
         const now = new Date();
 
         const sampleEvents = [

@@ -34,6 +34,7 @@ export default function DashboardLayout({
     };
 
     useEffect(() => {
+        if (process.env.NEXT_PUBLIC_SKIP_AUTH === "true") return;
         if (!loading && !user) {
             router.push("/login");
         }

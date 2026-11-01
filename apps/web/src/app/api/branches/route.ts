@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabase";
 import { fetchTraceEvents, computeCausalHash } from "@/lib/replay-simulation";
+import { resolveAuth } from "@/lib/api-auth";
 import crypto from "crypto";
 
 const EXECUTION_ENGINE_URL = process.env.EXECUTION_ENGINE_URL;
@@ -25,29 +25,10 @@ export async function GET(req: Request) {
             return NextResponse.json({ error: "traceId is required for security isolation" }, { status: 400 });
         }
 
-        const authHeader = req.headers.get("Authorization");
-        if (!authHeader) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        const auth = await resolveAuth(req);
+        if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-        const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-        const supabaseRest = createClient(supabaseUrl, supabaseAnonKey, {
-            auth: { persistSession: false },
-        });
-
-        const token = authHeader.replace("Bearer ", "");
-        const { data: { user }, error: authError } = await supabaseRest.auth.getUser(token);
-        if (authError || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-        const { data: membership } = await supabaseAdmin
-            .from("org_members")
-            .select("org_id")
-            .eq("user_id", user.id)
-            .limit(1)
-            .single();
-
-        if (!membership?.org_id) return NextResponse.json({ error: "No organization found" }, { status: 403 });
-
-        const orgId = membership.org_id;
+        const orgId = auth.orgId;
 
         const { data: trace, error: traceError } = await supabaseAdmin
             .from("traces")
@@ -55,7 +36,7 @@ export async function GET(req: Request) {
             .eq("id", traceId)
             .single();
 
-        if (traceError || !trace || trace.org_id !== orgId) {
+        if (traceError || !trace || (process.env.NEXT_PUBLIC_SKIP_AUTH !== "true" && trace.org_id !== orgId)) {
             return NextResponse.json({ error: "Trace not found" }, { status: 404 });
         }
 
@@ -81,7 +62,7 @@ export async function GET(req: Request) {
         const { data: dbBranches, error: branchErr } = await supabaseAdmin
             .from("branches")
             .select("*")
-            .or(`trace_id.eq.${traceId},parent_trace_id.eq.${traceId}`)
+            .eq("trace_id", traceId)
             .order("created_at", { ascending: false });
 
         if (branchErr) {
@@ -93,12 +74,12 @@ export async function GET(req: Request) {
             const overrides = b.overrides || {};
             return {
                 id: b.id,
-                parentTraceId: b.trace_id || b.parent_trace_id,
+                parentTraceId: b.trace_id,
                 forkStep: b.fork_step ?? 0,
                 name: b.name || `fork-step-${b.fork_step ?? 0}`,
-                parentHash: overrides._parent_hash || b.parent_hash || null,
+                parentHash: overrides._parent_hash || null,
                 createdAt: b.created_at,
-                overridePayload: overrides._override || b.override_payload || null,
+                overridePayload: overrides._override || null,
             };
         });
 
@@ -120,29 +101,10 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "traceId and forkStep are required" }, { status: 400 });
         }
 
-        const authHeader = req.headers.get("Authorization");
-        if (!authHeader) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        const auth = await resolveAuth(req);
+        if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-        const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-        const supabaseRest = createClient(supabaseUrl, supabaseAnonKey, {
-            auth: { persistSession: false },
-        });
-
-        const token = authHeader.replace("Bearer ", "");
-        const { data: { user }, error: authError } = await supabaseRest.auth.getUser(token);
-        if (authError || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-        const { data: membership } = await supabaseAdmin
-            .from("org_members")
-            .select("org_id")
-            .eq("user_id", user.id)
-            .limit(1)
-            .single();
-
-        if (!membership?.org_id) return NextResponse.json({ error: "No organization found" }, { status: 403 });
-
-        const orgId = membership.org_id;
+        const orgId = auth.orgId;
 
         const { data: trace, error: traceError } = await supabaseAdmin
             .from("traces")
@@ -150,7 +112,7 @@ export async function POST(req: Request) {
             .eq("id", traceId)
             .single();
 
-        if (traceError || !trace || trace.org_id !== orgId) {
+        if (traceError || !trace || (process.env.NEXT_PUBLIC_SKIP_AUTH !== "true" && trace.org_id !== orgId)) {
             return NextResponse.json({ error: "Trace not found" }, { status: 404 });
         }
 
@@ -207,13 +169,10 @@ export async function POST(req: Request) {
         const branchRecord: Record<string, any> = {
             id: branchId,
             trace_id: traceId,
-            parent_trace_id: traceId,
             org_id: orgId,
             fork_step: forkStep,
             name: branchName,
             overrides: overridesPayload,
-            override_payload: parsedOverride,
-            parent_hash: parentHash,
         };
 
         const { data: inserted, error: insertError } = await supabaseAdmin

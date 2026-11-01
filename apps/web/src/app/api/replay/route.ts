@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabase";
 import { fetchTraceEvents, computeCausalHash } from "@/lib/replay-simulation";
+import { resolveAuth } from "@/lib/api-auth";
 
 const EXECUTION_ENGINE_URL = process.env.EXECUTION_ENGINE_URL;
 
@@ -28,37 +28,13 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "traceId is required" }, { status: 400 });
         }
 
-        const authHeader = req.headers.get("Authorization");
-        if (!authHeader) {
+        const auth = await resolveAuth(req);
+        if (!auth) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        // Verify user auth
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
-        const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-        const supabaseRest = createClient(supabaseUrl!, supabaseAnonKey, {
-            auth: { persistSession: false },
-        });
-
-        const token = authHeader.replace("Bearer ", "");
-        const { data: { user }, error: authError } = await supabaseRest.auth.getUser(token);
-        if (authError || !user) {
-            return NextResponse.json({ error: "Unauthorized", details: authError?.message }, { status: 401 });
-        }
-
-        // Verify org access
-        const { data: membership, error: memberError } = await supabaseAdmin
-            .from("org_members")
-            .select("org_id")
-            .eq("user_id", user.id)
-            .limit(1)
-            .single();
-
-        if (memberError || !membership?.org_id) {
-            return NextResponse.json({ error: "No organization access" }, { status: 403 });
-        }
-
-        membershipOrgId = membership.org_id;
+        const { user, orgId } = auth;
+        membershipOrgId = orgId;
 
         const { data: trace } = await supabaseAdmin
             .from("traces")
@@ -66,7 +42,7 @@ export async function POST(req: Request) {
             .eq("id", traceId)
             .single();
 
-        if (!trace || trace.org_id !== membershipOrgId) {
+        if (!trace || (process.env.NEXT_PUBLIC_SKIP_AUTH !== "true" && trace.org_id !== membershipOrgId)) {
             return NextResponse.json({ error: "Trace not found" }, { status: 404 });
         }
 

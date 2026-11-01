@@ -25,14 +25,30 @@ interface AuthContextType {
 
 const AuthContext = React.createContext<AuthContextType | undefined>(undefined);
 
+const DEV_MOCK_USER: User = {
+    id: "7d2ac12f-a28a-4964-a109-9f81f7a30f0a",
+    email: "nirbhay@agenttrace.com",
+    name: "Nirbhay",
+    organizationId: "6cb9b31b-1678-4395-95b4-71caa628f94e",
+    role: "owner",
+};
+
+const isSkipAuth = process.env.NEXT_PUBLIC_SKIP_AUTH === "true";
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-    const [user, setUser] = React.useState<User | null>(null);
-    const [loading, setLoading] = React.useState(true);
+    const [user, setUser] = React.useState<User | null>(isSkipAuth ? DEV_MOCK_USER : null);
+    const [loading, setLoading] = React.useState(!isSkipAuth);
     const router = useRouter();
 
     const processedUserIdRef = React.useRef<string | null>(null);
 
     React.useEffect(() => {
+        if (isSkipAuth) {
+            setUser(DEV_MOCK_USER);
+            setLoading(false);
+            return;
+        }
+
         let mounted = true;
 
         const handleAuthChange = async (session: any) => {

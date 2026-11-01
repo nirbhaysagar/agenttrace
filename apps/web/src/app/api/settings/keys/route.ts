@@ -8,26 +8,19 @@ const supabaseAdmin = createClient(
     { auth: { persistSession: false, autoRefreshToken: false } }
 );
 
+import { resolveAuth } from '@/lib/api-auth';
+
 // Helper: resolve caller identity + org membership
 async function getCaller(req: NextRequest) {
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) return null;
-
-    const { data: { user }, error } = await supabaseAdmin.auth.getUser(
-        authHeader.replace('Bearer ', '')
-    );
-    if (error || !user) return null;
-
-    const { data: membership } = await supabaseAdmin
-        .from('org_members')
-        .select('org_id, role')
-        .eq('user_id', user.id)
-        .limit(1)
-        .single();
-
-    if (!membership) return null;
-
-    return { user, membership };
+    const auth = await resolveAuth(req);
+    if (!auth) return null;
+    return {
+        user: auth.user,
+        membership: {
+            org_id: auth.orgId,
+            role: auth.role,
+        },
+    };
 }
 
 // GET: List API keys for org (never returns the actual key, only prefix + metadata)
